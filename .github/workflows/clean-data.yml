@@ -43,5 +43,7 @@ jobs:
           # `PGPASSWORD=postgres_password psql ...`
           PGPASSWORD: postgres
         run: |
+          mkdir -p out
           psql --version
-          psql --host=localhost --username=postgres --dbname=postgres -f cleaning.sql
+          psql --host=localhost --username=postgres --dbname=postgres -f ./src/cleaning.sql
+          cat ./out/dataset.csv
