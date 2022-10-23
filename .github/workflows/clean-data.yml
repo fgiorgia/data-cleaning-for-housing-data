@@ -2,7 +2,7 @@ name: Clean data
 on: [push]
 jobs:
   # Label of the runner job
-  runner-job:
+  Data-cleanup:
     # You must use a Linux environment when using service containers or container jobs
     runs-on: ubuntu-latest
 
@@ -28,12 +28,12 @@ jobs:
     steps:
       - name: Check out repository code
         uses: actions/checkout@v3
+
       - name: List files in the repository
         run: |
           ls ${{ github.workspace }}
-      - run: echo "🍏 This job's status is ${{ job.status }}."
 
-      - name: "Setup PostgreSQL DB"
+      - name: "Run PostgreSQL cleanup"
         env:
           # The hostname used to communicate with the PostgreSQL service container
           POSTGRES_HOST: localhost
@@ -44,4 +44,4 @@ jobs:
           PGPASSWORD: postgres
         run: |
           psql --version
-          psql --host=localhost --username=postgres --dbname=postgres -c 'SELECT 1;'
+          psql --host=localhost --username=postgres --dbname=postgres -f cleaning.sql
