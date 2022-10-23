@@ -41,7 +41,7 @@ CREATE TABLE "HousingDataRaw"
 );
 
 -- Load dataset into our table
-\copy "HousingDataRaw" FROM normalised_path('./data/dataset.csv') DELIMITER '|' CSV HEADER;
+\copy "HousingDataRaw" FROM './data/dataset.csv' DELIMITER '|' CSV HEADER;
 
 --Verify if the Dataset works
 -- SELECT "UniqueID ", "ParcelID", "LandUse", "PropertyAddress", "SaleDate", "SalePricesString", "LegalReference", "SoldAsVacant", "OwnerName", "OwnerAddress", "Acreage", "TaxDistrict", "LandValue", "BuildingValue", "TotalValue", "YearBuilt", "Bedrooms", "FullBath", "HalfBath"
@@ -76,4 +76,4 @@ BEGIN
 END $$;
 
 -- Save table back into dataset
-\copy "HousingData" TO normalised_path('./out/dataset.csv') DELIMITER ',' CSV HEADER;
+\copy "HousingData" TO './out/dataset.csv' DELIMITER ',' CSV HEADER;
