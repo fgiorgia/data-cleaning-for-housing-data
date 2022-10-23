@@ -1,6 +1,19 @@
 -- Check if this is Windows
-select version();
-DECLARE is_windows CONSTANT datatype [ NOT NULL ] [ { DEFAULT | := } initial_value ]
+CREATE FUNCTION is_windows() RETURNS boolean AS $$
+    SELECT 
+		CASE 
+			WHEN version() LIKE '%Visual C++%' THEN true
+			ELSE false
+		END AS "isWindows";
+$$ LANGUAGE SQL;
+
+CREATE FUNCTION normalised_path(my_path varchar) RETURNS varchar AS $$
+    SELECT 
+		CASE 
+			WHEN is_windows() THEN regexp_replace(my_path, '/', '\\', 'g')
+			ELSE my_path
+		END AS "normalised_path";
+$$ LANGUAGE SQL;
 
 -- Create DB table
 CREATE TABLE "HousingDataRaw"
@@ -28,7 +41,7 @@ CREATE TABLE "HousingDataRaw"
 );
 
 -- Load dataset into our table
-\copy "HousingDataRaw" FROM './data/dataset.csv' DELIMITER '|' CSV HEADER;
+\copy "HousingDataRaw" FROM normalised_path('./data/dataset.csv') DELIMITER '|' CSV HEADER;
 
 --Verify if the Dataset works
 -- SELECT "UniqueID ", "ParcelID", "LandUse", "PropertyAddress", "SaleDate", "SalePricesString", "LegalReference", "SoldAsVacant", "OwnerName", "OwnerAddress", "Acreage", "TaxDistrict", "LandValue", "BuildingValue", "TotalValue", "YearBuilt", "Bedrooms", "FullBath", "HalfBath"
@@ -63,4 +76,4 @@ BEGIN
 END $$;
 
 -- Save table back into dataset
-\copy "HousingData" TO './out/dataset.csv' DELIMITER ',' CSV HEADER;
+\copy "HousingData" TO normalised_path('./out/dataset.csv') DELIMITER ',' CSV HEADER;
