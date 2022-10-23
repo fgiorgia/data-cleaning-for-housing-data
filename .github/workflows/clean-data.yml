@@ -1,8 +1,30 @@
 name: Clean data
 on: [push]
 jobs:
-  Explore-GitHub-Actions:
+  # Label of the runner job
+  runner-job:
+    # You must use a Linux environment when using service containers or container jobs
     runs-on: ubuntu-latest
+
+    # Service containers to run with `runner-job`
+    services:
+      # Label used to access the service container
+      postgres:
+        # Docker Hub image
+        image: postgres
+        # Provide the password for postgres
+        env:
+          POSTGRES_PASSWORD: postgres
+        # Set health checks to wait until postgres has started
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          # Maps tcp port 5432 on service container to the host
+          - 5432:5432
+
     steps:
       - name: Check out repository code
         uses: actions/checkout@v3
@@ -12,6 +34,14 @@ jobs:
       - run: echo "🍏 This job's status is ${{ job.status }}."
 
       - name: "Setup PostgreSQL DB"
+        env:
+          # The hostname used to communicate with the PostgreSQL service container
+          POSTGRES_HOST: localhost
+          # The default PostgreSQL port
+          POSTGRES_PORT: 5432
+          # postgress password is required; alternatively, you can run:
+          # `PGPASSWORD=postgres_password psql ...`
+          PGPASSWORD: postgres
         run: |
           psql --version
-          psql -c "CREATE DATABASE myDatabase WITH ENCODING 'UTF8' LC_COLLATE='en_US.UTF-8' LC_CTYPE='en_US.UTF-8';"
+          psql --host=localhost --username=postgres --dbname=postgres -c 'SELECT 1;'
