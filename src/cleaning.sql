@@ -36,8 +36,7 @@ CREATE TABLE "HousingDataRaw"
     "YearBuilt" VARCHAR(250), 
     "Bedrooms" VARCHAR(250), 
     "FullBath" VARCHAR(250), 
-    "HalfBath"  VARCHAR(250),
-    "DELETE_ME" VARCHAR(10)
+    "HalfBath"  VARCHAR(250)
 );
 
 -- Load dataset into our table
