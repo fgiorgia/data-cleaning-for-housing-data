@@ -1,7 +1,9 @@
 DO $$
-RAISE NOTICE 'Cleaning Nashville Data...';
+BEGIN 
+	RAISE NOTICE 'Cleaning Nashville Data...';
 END $$;
 
 DO $$
-RAISE NOTICE 'Cleaning Nashville Data complete!';
+BEGIN 
+	RAISE NOTICE 'Cleaning Nashville Data complete!';
 END $$;
