@@ -13,21 +13,16 @@ CREATE TABLE persons (
   PRIMARY KEY (id)
 );
 
+\! pwd
+
 -- Load dataset into our table
-COPY persons(first_name, last_name, dob, email)
-FROM '../data/dataset.csv'
-DELIMITER ','
-CSV HEADER;
+\copy persons(first_name, last_name, dob, email) FROM './data/dataset.csv' DELIMITER ',' CSV HEADER;
 
 -- Check that loading worked
 SELECT * FROM persons;
 
 -- Save table back into dataset
-COPY persons(first_name, last_name, dob, email)
-TO '../out/dataset.csv'
-DELIMITER ','
-CSV HEADER;
-
+\copy persons(first_name, last_name, dob, email) TO './out/dataset.csv' DELIMITER ',' CSV HEADER;
 
 
 DO $$
