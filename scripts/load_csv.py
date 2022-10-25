@@ -1,6 +1,7 @@
 import pandas as pd
 from sqlalchemy import create_engine
 import argparse
+import os
 
 def main():
   # Initialize parser
@@ -10,8 +11,7 @@ def main():
   parser.add_argument('--host', required=True)
   parser.add_argument('--port', default=5432)
   parser.add_argument('--username', required=True)
-  parser.add_argument('--password', required=True)
-  parser.add_argument('--database', required=True)
+  parser.add_argument('--dbname', required=True)
   parser.add_argument('--dataset', required=True)
   parser.add_argument('--tablename', default='dataset')
 
@@ -21,7 +21,7 @@ def main():
   
 def copy_dataset_to_db():
   # Instantiate sqlachemy.create_engine object
-  engine = create_engine(f'postgresql://{args.username}:{args.password}@{args.host}:{args.port}/{args.database}')
+  engine = create_engine(f'postgresql://{args.username}:{os.environ['PGPASSWORD']}@{args.host}:{args.port}/{args.dbname}')
 
   # Create an iterable that reads "chunksize=1000" rows
   # at a time from the CSV file
