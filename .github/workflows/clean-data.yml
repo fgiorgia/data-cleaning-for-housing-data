@@ -32,6 +32,10 @@ jobs:
       - name: List files in the repository
         run: |
           ls ${{ github.workspace }}
+      
+      - name: Setup python
+        run: |
+          python3 -pip install pandas sqlalchemy
 
       - name: "Run PostgreSQL cleanup"
         env:
@@ -44,6 +48,6 @@ jobs:
           PGPASSWORD: postgres
         run: |
           mkdir -p out
-          psql --version
+          python3 ./scripts/load_csv.py --host=localhost --username=postgres --dbname=postgres --dataset='./data/dataset.csv' --tablename="HousingDataRaw"
           psql --host=localhost --username=postgres --dbname=postgres -f ./src/cleaning.sql
           cat ./out/dataset.csv
