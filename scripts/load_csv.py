@@ -21,7 +21,7 @@ def main():
   
 def copy_dataset_to_db():
   # Instantiate sqlachemy.create_engine object
-  engine = create_engine(f'postgresql://{args.username}:{os.environ['PGPASSWORD']}@{args.host}:{args.port}/{args.dbname}')
+  engine = create_engine(f'postgresql://{args.username}:{os.environ["PGPASSWORD"]}@{args.host}:{args.port}/{args.dbname}')
 
   # Create an iterable that reads "chunksize=1000" rows
   # at a time from the CSV file
