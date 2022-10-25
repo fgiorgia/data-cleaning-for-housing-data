@@ -50,4 +50,7 @@ jobs:
           mkdir -p out
           python3 ./scripts/load_csv.py --host=localhost --username=postgres --dbname=postgres --dataset='./data/dataset.csv' --tablename="HousingDataRaw"
           psql --host=localhost --username=postgres --dbname=postgres -f ./src/cleaning.sql
-          cat ./out/dataset.csv
+      
+      - name: "Check exported data"
+        run: |
+          head -10 ./out/dataset.csv
