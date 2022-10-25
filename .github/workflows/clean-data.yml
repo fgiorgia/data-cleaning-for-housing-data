@@ -35,7 +35,7 @@ jobs:
       
       - name: Setup python
         run: |
-          python3 -m pip install pandas sqlalchemy
+          python3 -m pip install pandas sqlalchemy psycopg2
 
       - name: "Run PostgreSQL cleanup"
         env:
