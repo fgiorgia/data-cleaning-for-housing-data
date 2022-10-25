@@ -1,5 +1,7 @@
+-- Let the script fail as it encounters an error
+\set ON_ERROR_STOP true
+
 --Verify if the Dataset works
--- SELECT "UniqueID ", "ParcelID", "LandUse", "PropertyAddress", "SaleDate", "SalePricesString", "LegalReference", "SoldAsVacant", "OwnerName", "OwnerAddress", "Acreage", "TaxDistrict", "LandValue", "BuildingValue", "TotalValue", "YearBuilt", "Bedrooms", "FullBath", "HalfBath"
 SELECT *
 FROM "HousingDataRaw"
 LIMIT 10;
