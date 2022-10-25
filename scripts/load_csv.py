@@ -17,9 +17,11 @@ def main():
 
   # Read arguments from command line
   args = parser.parse_args()
+  
+  copy_dataset_to_db(args)
 
   
-def copy_dataset_to_db():
+def copy_dataset_to_db(args):
   # Instantiate sqlachemy.create_engine object
   engine = create_engine(f'postgresql://{args.username}:{os.environ["PGPASSWORD"]}@{args.host}:{args.port}/{args.dbname}')
 
