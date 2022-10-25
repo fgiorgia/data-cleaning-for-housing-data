@@ -25,14 +25,17 @@ def copy_dataset_to_db():
 
   # Create an iterable that reads "chunksize=1000" rows
   # at a time from the CSV file
+  print('Copying dataset to database...')
   for df in pd.read_csv(args.dataset, names='infer', chunksize=1000):
+    print('...')
     df.to_sql(
       args.tablename, 
       engine,
       index=False,
       if_exists='append' # if the table already exists, append this data
     )
+  print('Complete!')
 
+  
 if __name__ == '__main__':
   main()
-  
