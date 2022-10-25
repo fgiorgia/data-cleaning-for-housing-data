@@ -28,7 +28,7 @@ def copy_dataset_to_db(args):
   # Create an iterable that reads "chunksize=1000" rows
   # at a time from the CSV file
   print('Copying dataset to database...')
-  for df in pd.read_csv(args.dataset, names='infer', chunksize=1000):
+  for df in pd.read_csv(args.dataset, sep=None, names='infer', chunksize=1000):
     print('...')
     df.to_sql(
       args.tablename, 
