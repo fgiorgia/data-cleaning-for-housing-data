@@ -34,3 +34,6 @@ END $$;
 
 -- Save table back into dataset
 \copy "HousingData" TO './out/dataset.csv' DELIMITER ',' CSV HEADER;
+
+DROP table "HousingDataRaw"
+DROP table "HousingData"
