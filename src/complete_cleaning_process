@@ -1,0 +1,31 @@
+/** 
+
+This file contains all steps of the cleaning process to read and modify data
+
+**/
+
+----------------------------------------------------Functions----------------------------------------------------
+
+-- Cleans all matching the given regex
+CREATE FUNCTION clean_all(string varchar, regex varchar) RETURNS varchar AS $$
+    SELECT trim(regexp_replace(string, regex, '', 'g'));
+$$ LANGUAGE SQL;
+
+-- Counts the occurrentces of the given substring
+CREATE FUNCTION count_substring(string varchar, substr varchar) RETURNS integer AS $$
+    SELECT length(regexp_replace(string, concat('[^', substr, ']'), '', 'g'));
+$$ LANGUAGE SQL;
+
+-----------------------------------------------------------------------------------------------------------------
+
+
+----------------------------------------------------Examples-----------------------------------------------------
+
+SELECT clean_all('Bob Ross  is instructivve', '[ ]+') AS answer;
+SELECT count_substring('Bob Ross  is instructivve', ' ') AS answer;
+
+-----------------------------------------------------------------------------------------------------------------
+
+
+SELECT "UniqueID ", "ParcelID", "LandUse", "PropertyAddress", "SaleDate", "SalePricesString", "LegalReference", "SoldAsVacant", "OwnerName", "OwnerAddress", "Acreage", "TaxDistrict", "LandValue", "BuildingValue", "TotalValue", "YearBuilt", "Bedrooms", "FullBath", "HalfBath"
+FROM "HousingDataRaw";

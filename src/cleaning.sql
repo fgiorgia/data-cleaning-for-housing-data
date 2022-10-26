@@ -1,5 +1,12 @@
+/** 
+
+This file contains the final result of my cleaning.
+
+**/
+
 -- Let the script fail as it encounters an error
 \set ON_ERROR_STOP true
+SET client_encoding TO 'UTF8';
 
 --Verify if the Dataset works
 SELECT *
