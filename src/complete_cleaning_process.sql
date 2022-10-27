@@ -27,5 +27,21 @@ SELECT count_substring('Bob Ross  is instructivve', ' ') AS answer;
 -----------------------------------------------------------------------------------------------------------------
 
 
-SELECT "UniqueID ", "ParcelID", "LandUse", "PropertyAddress", "SaleDate", "SalePricesString", "LegalReference", "SoldAsVacant", "OwnerName", "OwnerAddress", "Acreage", "TaxDistrict", "LandValue", "BuildingValue", "TotalValue", "YearBuilt", "Bedrooms", "FullBath", "HalfBath"
+--Look at the table and check if it's working
+SELECT * FROM information_schema.columns 
+WHERE table_name = 'HousingDataRaw';
+
+SELECT *
+from "HousingDataRaw";
+
+--Check if columns work
+SELECT-- "﻿UniqueID ", 
+"UniqueID ","ParcelID", "LandUse", "PropertyAddress", "SaleDate", "SalePrice", "LegalReference", "SoldAsVacant", "OwnerName", "OwnerAddress", "Acreage", "TaxDistrict", "LandValue", "BuildingValue", "TotalValue", "YearBuilt", "Bedrooms", "FullBath", "HalfBath"
 FROM "HousingDataRaw";
+
+SELECT *
+FROM "HousingDataRaw"
+WHERE COALESCE ("ParcelID", "LandUse", "PropertyAddress", "SaleDate", "LegalReference", "SoldAsVacant", "OwnerName", "OwnerAddress", "TaxDistrict") is not NULL
+    or COALESCE("﻿UniqueID ", "SalePrice", "Acreage", "LandValue", "BuildingValue", "TotalValue", "YearBuilt", "Bedrooms", "FullBath", "HalfBath") is not null
+
+ 
