@@ -27,7 +27,8 @@ END $$;
 
 -- Cleaning
 
-
+ALTER TABLE "HousingData"
+RENAME COLUMN "﻿UniqueID " TO "UniqueID";
 
 
 
