@@ -32,6 +32,11 @@ jobs:
       - name: List files in the repository
         run: |
           ls ${{ github.workspace }}
+      
+      - name: Run Setup
+        run: |
+          bash ./scripts/setup.sh
+          
 
       - name: "Run PostgreSQL cleanup"
         env:
