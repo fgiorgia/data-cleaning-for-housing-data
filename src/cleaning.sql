@@ -11,7 +11,7 @@ SET client_encoding TO 'UTF8';
 --Verify if the Dataset works
 SELECT *
 FROM "HousingDataRaw"
-LIMIT 10;
+LIMIT 1;
 
 --Create a new Table to preserve the original one in order to modify the new one
 CREATE TABLE "HousingData" AS
@@ -26,9 +26,12 @@ BEGIN
 END $$;
 
 -- Cleaning
+SELECT column_name 
+FROM information_schema.columns 
+WHERE table_name = 'HousingDataRaw' AND ordinal_position = 1;
 
 ALTER TABLE "HousingData"
-RENAME COLUMN "﻿UniqueID " TO "UniqueID";
+RENAME COLUMN "UniqueID " TO "UniqueID";
 
 
 
