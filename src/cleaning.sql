@@ -26,9 +26,6 @@ BEGIN
 END $$;
 
 -- Cleaning
-SELECT column_name 
-FROM information_schema.columns 
-WHERE table_name = 'HousingDataRaw' AND ordinal_position = 1;
 
 ALTER TABLE "HousingData"
 RENAME COLUMN "UniqueID " TO "UniqueID";

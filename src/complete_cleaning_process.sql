@@ -38,11 +38,14 @@ FROM "HousingDataRaw"
 where "OwnerName" = '';
 
 --Check non-nulls, blank cells and header spaces
-SELECT column_name, count(value) AS non_nulls, count(*) FILTER (WHERE value = '') AS blank_cells, count_substring(column_name, ' +') AS header_extraspace, count(*) FILTER (WHERE value ~ '  +') AS rows_extraspace
+SELECT column_name, count(value) AS non_nulls, count(*) FILTER (WHERE LENGTH(value) = 0) AS blank_cells, count_substring(column_name, ' +') AS header_extraspace, count(*) FILTER (WHERE value ~ '  +') AS rows_extraspace
 FROM "HousingDataRaw"  nh
   CROSS JOIN LATERAL jsonb_each_text(jsonb_strip_nulls(to_jsonb(nh))) AS j(column_name, value)
 GROUP BY column_name
 ORDER BY non_nulls, blank_cells DESC, header_extraspace DESC, rows_extraspace DESC;
 
+SELECT "UniqueID " , "OwnerName" 
+FROM "HousingDataRaw" hdr 
+WHERE "UniqueID " = 29467
 
  
