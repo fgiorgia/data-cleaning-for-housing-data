@@ -19,6 +19,7 @@ $$ LANGUAGE SQL;
 -----------------------------------------------------------------------------------------------------------------
 
 
+
 ----------------------------------------------------Examples-----------------------------------------------------
 
 SELECT clean_all('Bob Ross  is instructivve', '[ ]+') AS answer;
@@ -28,20 +29,20 @@ SELECT count_substring('Bob Ross  is instructivve', ' ') AS answer;
 
 
 --Look at the table and check if it's working
-SELECT * FROM information_schema.columns 
+SELECT * 
+FROM information_schema.columns 
 WHERE table_name = 'HousingDataRaw';
 
 SELECT *
-from "HousingDataRaw";
-
---Check if columns work
-SELECT-- "﻿UniqueID ", 
-"UniqueID ","ParcelID", "LandUse", "PropertyAddress", "SaleDate", "SalePrice", "LegalReference", "SoldAsVacant", "OwnerName", "OwnerAddress", "Acreage", "TaxDistrict", "LandValue", "BuildingValue", "TotalValue", "YearBuilt", "Bedrooms", "FullBath", "HalfBath"
 FROM "HousingDataRaw";
 
-SELECT *
-FROM "HousingDataRaw"
-WHERE COALESCE ("ParcelID", "LandUse", "PropertyAddress", "SaleDate", "LegalReference", "SoldAsVacant", "OwnerName", "OwnerAddress", "TaxDistrict") is not NULL
+--Check non-nulls, blank cells and header spaces
+SELECT column_name, count(value) AS non_nulls, count(*) FILTER (WHERE value = '') AS blank_cells, count_substring(column_name, ' ') AS headers_space
+FROM "HousingDataRaw"  nh
+  CROSS JOIN LATERAL jsonb_each_text(jsonb_strip_nulls(to_jsonb(nh))) AS j(column_name, value)
+GROUP BY column_name
+ORDER BY non_nulls, blank_cells DESC;
+
     or COALESCE("﻿UniqueID ", "SalePrice", "Acreage", "LandValue", "BuildingValue", "TotalValue", "YearBuilt", "Bedrooms", "FullBath", "HalfBath") is not null
 
  
