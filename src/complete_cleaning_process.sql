@@ -34,15 +34,15 @@ FROM information_schema.columns
 WHERE table_name = 'HousingDataRaw';
 
 SELECT *
-FROM "HousingDataRaw";
+FROM "HousingDataRaw"
+where "OwnerName" = '';
 
 --Check non-nulls, blank cells and header spaces
-SELECT column_name, count(value) AS non_nulls, count(*) FILTER (WHERE value = '') AS blank_cells, count_substring(column_name, ' ') AS headers_space
+SELECT column_name, count(value) AS non_nulls, count(*) FILTER (WHERE value = '') AS blank_cells, count_substring(column_name, ' +') AS header_extraspace, count(*) FILTER (WHERE value ~ '  +') AS rows_extraspace
 FROM "HousingDataRaw"  nh
   CROSS JOIN LATERAL jsonb_each_text(jsonb_strip_nulls(to_jsonb(nh))) AS j(column_name, value)
 GROUP BY column_name
-ORDER BY non_nulls, blank_cells DESC;
+ORDER BY non_nulls, blank_cells DESC, header_extraspace DESC, rows_extraspace DESC;
 
-    or COALESCE("﻿UniqueID ", "SalePrice", "Acreage", "LandValue", "BuildingValue", "TotalValue", "YearBuilt", "Bedrooms", "FullBath", "HalfBath") is not null
 
  
