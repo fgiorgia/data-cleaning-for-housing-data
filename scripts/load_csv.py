@@ -18,6 +18,10 @@ def main():
   # Read arguments from command line
   args = parser.parse_args()
   
+  if (os.environ.get("PGPASSWORD", None) is None):
+    print("Error: Missing Postgres password as env PGPASSWORD")
+    return exit(1)
+
   copy_dataset_to_db(args)
 
   
