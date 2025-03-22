@@ -4,10 +4,11 @@ Cleaning the *Nashville Housing Data* dataset.
 
 ## Initial setup
 
-You need [Poetry](https://python-poetry.org/docs/#installation) to setup this project.
+You need [Poetry](https://python-poetry.org/docs/#installation) to setup this project, as well as the poe plugin.
 
 ```sh
 poetry install
+poetry self add 'poethepoet[poetry_plugin]'
 ```
 
 Set your Postgres as `PGPASSWORD` env variable.
@@ -26,8 +27,8 @@ $env:PGPASSWORD="replacewithyourpostgrespassword"
 
 You need to install the Levenshtein Postgres exstension before running the cleaning script.
 
-Run the cleaning script
+Run the cleaning pipeline
 
-```ps
-scripts\run.ps1
+```sh
+ poetry poe data-cleaning-pipeline
 ```
