@@ -1,4 +1,6 @@
 .venv
-
+.env
+.pgpass
+**/__pycache__
 out/dataset.csv
 data/dataset_no_bom.csv
