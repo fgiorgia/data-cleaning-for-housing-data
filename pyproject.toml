@@ -11,7 +11,8 @@ requires-python = ">=3.10"
 dependencies = [
     "pandas (>=2.2.3,<3.0.0)",
     "sqlalchemy (>=2.0.39,<3.0.0)",
-    "psycopg2 (>=2.9.10,<3.0.0)"
+    "psycopg2 (>=2.9.10,<3.0.0)",
+    "folium (>=0.19.5,<0.20.0)"
 ]
 
 
