@@ -2,15 +2,25 @@
 
 Cleaning the *Nashville Housing Data* dataset.
 
-Initial setup
+## Initial setup
 
-```ps
-scripts\setup.ps1
+You need [Poetry](https://python-poetry.org/docs/#installation) to setup this project.
+
+```sh
+poetry install
 ```
 
-Set your Postgres password with
+Set your Postgres as `PGPASSWORD` env variable.
 
-```ps
+On Unix-like envs:
+
+```sh
+export PGPASSWORD="replacewithyourpostgrespassword"
+```
+
+On Windows:
+
+```powershell
 $env:PGPASSWORD="replacewithyourpostgrespassword"
 ```
 
