@@ -26,7 +26,15 @@ packages = [
 
 [tool.poe.tasks]
 remove-bom = "python ./scripts/remove_bom.py --input='./data/dataset.csv' --output='./data/dataset_no_bom.csv'"
-load-csv = "python ./scripts/load_csv.py --host=localhost --username=postgres --dbname=postgres --dataset='./data/dataset_no_bom.csv' --tablename='HousingDataRaw'"
+load-csv = "python ./scripts/load_csv.py --host=localhost --username=postgres --dbname=postgres --port=5433 --dataset='./data/dataset_no_bom.csv' --tablename='HousingDataRaw'"
 ensure-out-dir = "python -c \"import os; os.makedirs('directory/path', exist_ok=True)\""
-slq-cleanup = "psql --host=localhost --username=postgres --dbname=postgres -f ./src/cleaning.sql"
-data-cleaning-pipeline = ["ensure-out-dir", "remove-bom", "load-csv", "slq-cleanup"]
+sql-install-fuzzystrmatch = "psql --host=localhost --username=postgres --dbname=postgres --port=5433 -c \"CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;\""
+slq-cleanup = "psql --host=localhost --username=postgres --dbname=postgres --port=5433 -f ./src/cleaning.sql"
+data-cleaning-pipeline = [
+  "ensure-out-dir", 
+  "remove-bom", 
+  "load-csv", 
+  "sql-install-fuzzystrmatch", 
+  "slq-cleanup", 
+  ]
+
