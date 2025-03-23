@@ -20,21 +20,12 @@ poetry self add 'poethepoet[poetry_plugin]'
 poetry install
 ```
 
+### Environment variables
+
+Create a `.env` in the root of your project and set your Postgres
+password as the `DB_PASSWORD`. Alternatively, set it directly as an env variable.
+
 ## Running the pipeline
-
-Set your Postgres password as the `PGPASSWORD` env variable.
-
-On Unix-like envs:
-
-```sh
-export PGPASSWORD="replacewithyourpostgrespassword"
-```
-
-On Windows:
-
-```powershell
-$env:PGPASSWORD="replacewithyourpostgrespassword"
-```
 
 Run the cleaning pipeline
 
