@@ -4,14 +4,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-class ConfigInterface(TypedDict):
+class DBConfig(TypedDict):
     hostname: str
     port: str
     database: str
     username: str
     password: str | None
 
-def get_env_config() -> ConfigInterface:
+def get_db_config() -> DBConfig:
   #  --host=localhost --username=postgres --dbname=postgres --port=5433
   hostname = os.environ.get("DB_HOSTNAME", "localhost")
   port = os.environ.get("DB_PORT", "5432")
@@ -27,9 +27,3 @@ def get_env_config() -> ConfigInterface:
     "password": password
   }
 
-def create_pgpass() -> None:
-   # hostname:port:database:username:password
-  config = get_env_config()
-  pgpass_content = f"{config['hostname']}:{config['port']}:{config['database']}:{config['username']}:{config['password']}\n"
-  with open("./.pgpass", "w") as file:
-    file.write(pgpass_content)

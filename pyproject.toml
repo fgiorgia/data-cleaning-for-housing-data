@@ -26,20 +26,16 @@ packages = [
     { include = "scripts" },
 ]
 
-[tool.poetry.scripts]
-create-pgpass = "scripts.config:create_pgpass"
-
 [tool.poe.tasks]
-create-pgpass = "poetry run create-pgpass"
 remove-bom = "python ./scripts/remove_bom.py --input='./data/dataset.csv' --output='./data/dataset_no_bom.csv'"
-load-csv = "python ./scripts/load_csv.py --host=localhost --username=postgres --dbname=postgres --port=5433 --dataset='./data/dataset_no_bom.csv' --tablename='HousingDataRaw'"
+load-csv = "python ./scripts/load_csv.py --datasetFile='./data/dataset_no_bom.csv' --table='HousingDataRaw'"
 ensure-out-dir = "python -c \"import os; os.makedirs('directory/path', exist_ok=True)\""
-sql-install-fuzzystrmatch = "psql --host=localhost --username=postgres --dbname=postgres --port=5433 -c \"CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;\""
-slq-cleanup = "psql --host=localhost --username=postgres --dbname=postgres --port=5433 -f ./src/cleaning.sql"
+sql-install-fuzzystrmatch = "python ./scripts/psql_with_config.py -c \"CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;\""
+sql-cleanup = "python ./scripts/psql_with_config.py -f ./src/cleaning.sql"
 data-cleaning-pipeline = [
   "ensure-out-dir", 
   "remove-bom", 
-  "load-csv", 
+  "load-csv",
   "sql-install-fuzzystrmatch", 
-  "slq-cleanup", 
+  "sql-cleanup", 
 ]
