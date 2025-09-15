@@ -31,7 +31,7 @@ packages = [
 [tool.poe.tasks]
 remove-bom = "python ./scripts/remove_bom.py --input='./data/dataset.csv' --output='./data/dataset_no_bom.csv'"
 load-csv = "python ./scripts/load_csv.py --datasetFile='./data/dataset_no_bom.csv' --table='HousingDataRaw'"
-ensure-out-dir = "python -c \"import os; os.makedirs('directory/path', exist_ok=True)\""
+ensure-out-dir = "python -c \"import os; os.makedirs('out', exist_ok=True)\""
 sql-install-fuzzystrmatch = "python ./scripts/psql_with_config.py -c \"CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;\""
 sql-cleanup = "python ./scripts/psql_with_config.py -f ./src/cleaning.sql"
 data-cleaning-pipeline = [
