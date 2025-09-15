@@ -52,6 +52,7 @@ jobs:
           # postgress password is required; alternatively, you can run:
           # `PGPASSWORD=postgres_password psql ...`
           PGPASSWORD: postgres
+          DB_PASSWORD: postgres
         run: |
           poetry poe data-cleaning-pipeline
       
