@@ -189,5 +189,5 @@ END $$;
 -- Save table back into dataset
 \copy housing_data TO './out/dataset.csv' DELIMITER ',' CSV HEADER;
 
-DROP table "HousingDataRaw";
-DROP table housing_data;
+ DROP table "HousingDataRaw";
+ DROP table housing_data;
