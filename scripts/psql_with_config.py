@@ -3,7 +3,6 @@ from scripts.config import get_db_config
 import subprocess
 import os
 import shlex
-import signal
 
 def main():
     dbConfig = get_db_config()
