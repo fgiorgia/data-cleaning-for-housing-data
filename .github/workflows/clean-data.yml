@@ -32,11 +32,16 @@ jobs:
       - name: List files in the repository
         run: |
           ls ${{ github.workspace }}
-      
-      - name: Run Setup
-        run: |
-          bash ./scripts/setup.sh
-          
+
+      - name: Install poetry
+        run: pipx install poetry
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'poetry'
+      - run: poetry config --list
+
+      - run: poetry install
 
       - name: "Run PostgreSQL cleanup"
         env:
@@ -48,7 +53,7 @@ jobs:
           # `PGPASSWORD=postgres_password psql ...`
           PGPASSWORD: postgres
         run: |
-          bash ./scripts/run.sh
+          poetry poe data-cleaning-pipeline
       
       - name: "Check exported data"
         run: |
