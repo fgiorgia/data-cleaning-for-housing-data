@@ -37,6 +37,11 @@ data-cleaning-pipeline = [
   "sql-cleanup", 
 ]
 
+# Provision the full enriched database (PostGIS, geocoding, address functions)
+# by restoring data/migration_dump.backup into a dedicated database. See README.
+restore-backup = "python ./scripts/restore_backup.py"
+restore-backup-fresh = "python ./scripts/restore_backup.py --recreate"
+
 [dependency-groups]
 dev = [
     "poethepoet>=0.34.0",

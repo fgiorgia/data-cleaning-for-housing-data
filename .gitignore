@@ -4,3 +4,6 @@
 **/__pycache__
 out/dataset.csv
 data/dataset_no_bom.csv
+
+# Machine-specific junction to the shared skills folder in travel-data-suite
+.agents/
