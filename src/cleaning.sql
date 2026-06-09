@@ -2,6 +2,16 @@
 
 This file contains the final result of my cleaning.
 
+It is the from-scratch pipeline (run by `uv run poe data-cleaning-pipeline`)
+that rebuilds the base `housing_data` table from `data/dataset.csv`.
+
+NOTE: This base pipeline intentionally diverges from the fully enriched,
+geocoded database captured in `data/migration_dump.backup`, whose authoritative
+schema lives in `src/schema.sql`. The backup's helper functions are NOT drop-in
+compatible here (they assume pandas-exported headers such as 'Unnamed: 0' and
+'suite/ condo   #' and depend on external geocoding), so they are deliberately
+not merged into this file.
+
 **/
 
 
