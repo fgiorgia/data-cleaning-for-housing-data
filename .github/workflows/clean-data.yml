@@ -1,61 +1,67 @@
 name: Clean data
 on: [push]
 jobs:
-  # Label of the runner job
-  Data-cleanup:
-    # You must use a Linux environment when using service containers or container jobs
+  data-cleanup:
     runs-on: ubuntu-latest
 
-    # Service containers to run with `runner-job`
     services:
-      # Label used to access the service container
       postgres:
-        # Docker Hub image
-        image: postgres
-        # Provide the password for postgres
+        # Pin a major version instead of 'postgres' (bare tag = whatever is
+        # latest that day, so CI results are not reproducible).
+        image: postgres:17
         env:
           POSTGRES_PASSWORD: postgres
-        # Set health checks to wait until postgres has started
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
         ports:
-          # Maps tcp port 5432 on service container to the host
           - 5432:5432
 
     steps:
       - name: Check out repository code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
 
-      - name: List files in the repository
-        run: |
-          ls ${{ github.workspace }}
-
-      - name: Install poetry
-        run: pipx install poetry
-      - uses: actions/setup-python@v5
+      # The project is managed with uv (uv.lock), not poetry. setup-uv also
+      # installs the Python version required by pyproject and caches the
+      # environment keyed on uv.lock.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
         with:
-          python-version: '3.12'
-          cache: 'poetry'
-      - run: poetry config --list
+          enable-cache: true
 
-      - run: poetry install
+      - name: Install dependencies
+        run: uv sync
 
-      - name: "Run PostgreSQL cleanup"
+      - name: Run PostgreSQL cleanup
         env:
-          # The hostname used to communicate with the PostgreSQL service container
-          POSTGRES_HOST: localhost
-          # The default PostgreSQL port
-          POSTGRES_PORT: 5432
-          # postgress password is required; alternatively, you can run:
-          # `PGPASSWORD=postgres_password psql ...`
-          PGPASSWORD: postgres
           DB_PASSWORD: postgres
+        run: uv run poe data-cleaning-pipeline
+
+      - name: Check exported data
         run: |
-          poetry poe data-cleaning-pipeline
-      
-      - name: "Check exported data"
-        run: |
-          head -10 ./out/dataset.csv
+          # Fail the job if the export is missing or empty, then assert the
+          # basic post-cleaning invariants instead of only eyeballing rows.
+          test -s ./out/dataset.csv
+          head -5 ./out/dataset.csv
+          uv run python - << 'PYEOF'
+          import csv
+          import sys
+
+          with open("out/dataset.csv", encoding="utf-8") as f:
+              rows: list[dict[str, str]] = list(csv.DictReader(f))
+
+          errors: list[str] = []
+          if not rows:
+              errors.append("export is empty")
+          if any(not r["property_address"] for r in rows):
+              errors.append("NULL property_address found")
+          if any(r["sold_as_vacant"] not in ("t", "f", "") for r in rows):
+              errors.append("sold_as_vacant is not boolean")
+          if any("  " in v for r in rows for v in r.values()):
+              errors.append("double spaces remain")
+          if errors:
+              sys.exit("Data quality checks failed: " + "; ".join(errors))
+          print(f"Data quality checks passed ({len(rows)} rows).")
+          PYEOF
