@@ -11,7 +11,9 @@ requires-python = ">=3.10"
 dependencies = [
     "pandas (>=2.2.3,<3.0.0)",
     "sqlalchemy (>=2.0.39,<3.0.0)",
-    "psycopg2 (>=2.9.10,<3.0.0)",
+    # psycopg (v3) replaces psycopg2, which is in maintenance mode.
+    # The [binary] extra ships a prebuilt libpq so CI needs no compiler.
+    "psycopg[binary] (>=3.2,<4.0)",
     "folium (>=0.19.5,<0.20.0)",
     "python-dotenv (>=1.0.1,<2.0.0)",
 ]
@@ -36,6 +38,14 @@ data-cleaning-pipeline = [
   "sql-install-fuzzystrmatch", 
   "sql-cleanup", 
 ]
+sql-cleanup-keep = "python ./scripts/psql_with_config.py -v KEEP_TABLES=1 -f ./src/cleaning.sql"
+data-cleaning-pipeline-keep = [
+    "ensure-out-dir", 
+    "remove-bom", 
+    "load-csv", 
+    "sql-install-fuzzystrmatch", 
+    "sql-cleanup-keep"
+    ]
 
 # Provision the full enriched database (PostGIS, geocoding, address functions)
 # by restoring data/migration_dump.backup into a dedicated database. See README.
