@@ -27,21 +27,51 @@ All commands below run through uv, e.g. `uv run poe <task>`.
 
 ### Environment variables
 
-Create a `.env` in the root of your project and set your Postgres
-password as the `DB_PASSWORD`. Alternatively, set it directly as an env variable.
+Create a `.env` in the root of your project and set your Postgres password as
+the `DB_PASSWORD`. Alternatively, set it directly as an env variable.
+
+The connection can be customised further; every variable except the password
+has a default:
+
+| Variable      | Default     | Purpose                          |
+| ------------- | ----------- | -------------------------------- |
+| `DB_PASSWORD` | *(required)*| Postgres password                |
+| `DB_HOSTNAME` | `localhost` | Postgres host                    |
+| `DB_PORT`     | `5432`      | Postgres port                    |
+| `DB_USERNAME` | `postgres`  | Postgres user                    |
+| `DB_DATABASE` | `postgres`  | Database the pipeline runs in    |
 
 ## Running the from-scratch cleaning pipeline
 
-This rebuilds the base `housing_data` table from `data/dataset.csv` using the
-SQL in [`src/cleaning.sql`](src/cleaning.sql):
+This loads `data/dataset.csv` into Postgres, cleans it with the SQL in
+[`src/cleaning.sql`](src/cleaning.sql), and exports the result to
+**`out/dataset.csv`**:
 
 ```sh
 uv run poe data-cleaning-pipeline
 ```
 
+The working tables (`"HousingDataRaw"` and `housing_data`) are dropped once
+the export succeeds; the cleaned CSV is the pipeline's deliverable.
+
+### Pipeline behaviour
+
+- **Safe to re-run.** Loading replaces the raw table instead of appending,
+  and the whole cleaning stage runs inside a single transaction: any failure
+  rolls the database back to its pre-run state.
+- **Fails fast on bad data.** `sale_price` and `sold_as_vacant` are validated
+  before conversion; unparseable values abort the run with an explicit error
+  instead of silently becoming `NULL`.
+- **Removes exact duplicates.** Rows with the same parcel, address, price,
+  sale date, and legal reference are collapsed to one (lowest `unique_id`
+  kept).
+- **Output types.** `sale_date` is a date, `sale_price` is numeric (decimals
+  preserved), and `sold_as_vacant` is a boolean - it appears as `t`/`f` in
+  the exported CSV, not `Y`/`N`.
+
 ## Provisioning the full enriched database from the backup
 
-The from-scratch pipeline above produces the cleaned base table only. The full
+The from-scratch pipeline above produces the cleaned dataset only. The full
 system - PostGIS geometry, geocoded `unique_addresses`, address-mapping and
 data-quality tables, and the address-parsing function library - was built with
 external geocoding (OSM/HERE) and is captured in the binary archive
