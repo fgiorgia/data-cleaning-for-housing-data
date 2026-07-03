@@ -7,4 +7,9 @@ data/dataset_no_bom.csv
 nashville_property_map.html
 
 # Machine-specific junction to the shared skills folder in travel-data-suite
+data/
 .agents/
+.agents/geocoding.log
+geocoding.log
+geocoding_cli.log
+out/restore_toc.list
