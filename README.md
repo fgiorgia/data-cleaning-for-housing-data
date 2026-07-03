@@ -87,3 +87,20 @@ from-scratch pipeline's `postgres` database:
 uv run poe restore-backup          # creates the database if missing
 uv run poe restore-backup-fresh    # drops and rebuilds it
 ```
+
+## Feature tools (restored `housing` database)
+
+These tasks operate on the enriched database created by `restore-backup`
+(they need `unique_addresses` / `address_mappings`, which only exist there).
+Each defaults `DB_DATABASE` to `housing`; set it in your shell to override.
+
+| Task | What it does |
+| --- | --- |
+| `uv run poe address-standardization` | (Re)applies `src/address_standardization.sql` and refreshes `address_standardized` — idempotent |
+| `uv run poe geocoder --stats-only` | Geocoding CLI (OSM first, HERE fallback); `--stats-only` reports without spending API calls |
+| `uv run poe show-map` | Renders `nashville_property_map.html` from geocoded addresses |
+| `uv run poe data-quality-check` | Streamlit data-quality dashboard over `housing_data` |
+| `uv run poe geocoding-dashboard` | Dash dashboard for reviewing/correcting geocodes |
+
+The HERE fallback needs `HERE_API_KEY` in `.env`; without it the geocoder
+still runs OSM-only.
