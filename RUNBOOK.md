@@ -1,12 +1,16 @@
 # Runbook
 
-Step-by-step instructions for a new user. The project has two independent
-workflows that share the same machine setup but target different databases:
+Step-by-step instructions for a new user. The project has three workflows
+that share the same machine setup but target different databases:
 
 | Workflow | Command | Database | Tables after run |
 | --- | --- | --- | --- |
 | **Cleaning pipeline** | `uv run poe data-cleaning-pipeline` | `postgres` (default) | Dropped — `out/dataset.csv` is the deliverable |
 | **Backup restore** | `uv run poe restore-backup` | `housing` (dedicated) | Persist — browse them in DBeaver / psql |
+| **Feature tools** | `uv run poe geocoding-dashboard` (and others) | `housing` (dedicated) | Read/write the restored tables (§3) |
+
+The feature tools are new and all operate on the `housing` database created
+by the backup restore, so run **§2 before §3**.
 
 ---
 
@@ -51,6 +55,11 @@ Install [uv](https://docs.astral.sh/uv/), then from the repo root:
 uv sync
 ```
 
+`uv sync` installs everything in `uv.lock`, including the feature-tool
+dependencies added during the merge (`requests`, `dash`,
+`dash-bootstrap-components`, `streamlit`, `plotly`, `psycopg2-binary`). A
+fresh clone needs no extra `uv add`.
+
 ### 0.3 Environment variables
 
 Create `.env` in the repo root:
@@ -76,6 +85,11 @@ Optional overrides (the defaults work for a standard local install):
 | `DB_PORT` | `5432` | Postgres port |
 | `DB_USERNAME` | `postgres` | Postgres user |
 | `DB_DATABASE` | `postgres` | Database the **cleaning pipeline** runs in |
+
+The feature tools (§3) use one additional **optional** variable,
+`HERE_API_KEY`, documented in §3.1. `.env` therefore ends up holding two
+secrets — `DB_PASSWORD` and `HERE_API_KEY` — so keep it out of version
+control (it is already gitignored; verify with `git check-ignore -v .env`).
 
 ---
 
@@ -146,7 +160,8 @@ Restores `data/migration_dump.backup` into a **separate** `housing` database.
 This is the full enriched system: PostGIS geometry, geocoded
 `unique_addresses`, address-mapping and data-quality tables, and the
 address-parsing function library. Unlike the cleaning pipeline, the tables
-**persist** — this is what you browse in DBeaver.
+**persist** — this is what you browse in DBeaver and what the §3 feature
+tools read and write.
 
 ### First run (database does not exist yet)
 
@@ -215,6 +230,171 @@ these under Schemas → public → Tables.
 | `Could not find 'pg_restore'` | PostgreSQL bin directory not on `PATH` | Add it (e.g. `export PATH="/usr/lib/postgresql/17/bin:$PATH"` on Linux, or `C:\Program Files\PostgreSQL\17\bin` on Windows) |
 | `extension "postgis" is not available` | PostGIS not installed | Install it (step 0.1, Extensions) |
 | `duplicate key value violates unique constraint` on `spatial_ref_sys` | Stale `out/restore_toc.list` from a previous interrupted run | Delete `out/restore_toc.list` and re-run |
+
+---
+
+## 3. Feature tools (the `housing` database)
+
+These tasks were merged in from the `-copy` repo. They all read or write
+`unique_addresses` / `address_mappings` / `housing_data`, which **only exist
+in `housing`**, so each task defaults `DB_DATABASE` to `housing`. That
+default is overridable: set `DB_DATABASE` in your shell to retarget (e.g.
+`export DB_DATABASE=housing_clean` on Linux/macOS, `$env:DB_DATABASE =
+"..."` on Windows PowerShell).
+
+**Prerequisite:** run `uv run poe restore-backup` (§2) first. Without it these
+tools connect to a database that has no `unique_addresses` table and abort.
+
+### 3.1 Extra setup: the HERE API key (optional)
+
+Geocoding tries **OpenStreetMap / Nominatim first** — a free, open-source
+service that needs no key — and falls back to **HERE**, a commercial
+geocoder, only for addresses OSM cannot resolve. HERE is entirely optional:
+without a key the geocoder runs OSM-only and simply marks the addresses HERE
+would have rescued as `FAILED`.
+
+To enable the fallback, add your key to `.env`:
+
+```env
+HERE_API_KEY=your_here_rest_api_key
+```
+
+Create the key at <https://platform.here.com> under Access Manager → your app
+→ Credentials → **API Keys (REST)**. A freshly created key can take a few
+minutes to activate, and the older `app_id` / `app_code` credentials do **not**
+work with this endpoint.
+
+> **Privacy note.** Both geocoders receive the address strings you send them:
+> running the geocoder transmits addresses from `unique_addresses` to
+> `nominatim.openstreetmap.org` and, on fallback, to HERE. The Nashville
+> dataset is public property data, but treat the pattern as the general rule —
+> geocoding sends location data to a third party. Keep `.env` (which holds
+> `DB_PASSWORD` and `HERE_API_KEY`) gitignored, and note that the dashboard in
+> §3.3 binds to `127.0.0.1` specifically so its data and debugger stay off the
+> local network.
+
+### 3.2 The tasks
+
+| Task | Local URL | What it does |
+| --- | --- | --- |
+| `uv run poe address-standardization` | — | (Re)applies `src/address_standardization.sql` and refreshes `address_standardized`. Idempotent (`CREATE OR REPLACE` / `ADD COLUMN IF NOT EXISTS`), safe to re-run. |
+| `uv run poe geocoder --stats-only` | — | Geocoding CLI. `--stats-only` reports API usage + DB completeness **without spending any API calls**. Drop the flag to actually geocode. |
+| `uv run poe show-map` | opens `nashville_property_map.html` | Renders a clustered Folium map of geocoded properties. The HTML is a generated artifact (gitignored); regenerate any time. |
+| `uv run poe data-quality-check` | <http://localhost:8501> | Streamlit dashboard over `housing_data` (data-quality issues). |
+| `uv run poe geocoding-dashboard` | <http://localhost:8050> | Dash dashboard for reviewing and correcting geocodes (§3.3). |
+
+Stop a dashboard with `Ctrl+C` in its terminal.
+
+### 3.3 Geocoding dashboard (Dash, port 8050)
+
+```sh
+uv run poe geocoding-dashboard
+# then open http://localhost:8050 (hard-refresh with Ctrl+F5 if you had an old tab open)
+```
+
+**The work queue.** The status dropdown defaults to **"Needs attention"** —
+every address that is either `FAILED` or has no coordinates yet. This is the
+list you actually work through. Two things to know:
+
+- **"Pending"** is the subset that has never been attempted (no coordinates,
+  not explicitly failed). Never-geocoded rows have `status IS NULL`, so a
+  plain status filter can't surface them — that's why the filter keys off
+  coordinates, not just status.
+- The **map only shows rows with coordinates**. Pending rows appear in the
+  table but not on the map (they have nowhere to plot), which is expected.
+
+**Refresh behaviour.** The page checks for changes every 30 seconds via a
+cheap change token; it only re-reads the table and redraws the map when the
+data actually changed. On an idle database it does almost no work per tick.
+Saving a correction through the edit modal refreshes every panel immediately.
+
+**Debug and network.** The in-browser debugger is opt-in — set `DASH_DEBUG=1`
+before launching if you need tracebacks in the page. The auto-reloader is off
+by design (file churn in the project tree — logs, `__pycache__`, editor/sync
+tools — makes it restart-loop, which the browser reports as "Server
+Unavailable"). Because of that, **stop the task before swapping
+`src/geocoding_dashboard.py`, then relaunch** — don't edit it in place while
+it's running. The server binds `127.0.0.1`, not `0.0.0.0`, so it is not
+reachable from other machines.
+
+**Optional indexes.** As the pending set shrinks, a partial index makes the
+queue query an index scan instead of a sequential scan. Run once against
+`housing`:
+
+```sh
+# Linux/macOS: DB_DATABASE=housing uv run python ./scripts/psql_with_config.py -c "..."
+# Windows PowerShell:
+$env:DB_DATABASE = "housing"
+uv run python ./scripts/psql_with_config.py -c "CREATE INDEX IF NOT EXISTS idx_ua_needs_attention ON unique_addresses (address_id) WHERE status = 'FAILED' OR latitude IS NULL OR longitude IS NULL; CREATE INDEX IF NOT EXISTS idx_ua_status ON unique_addresses (status);"
+Remove-Item Env:\DB_DATABASE
+```
+
+### 3.4 Verifying which address was added or changed
+
+Three layers, quickest to most authoritative:
+
+1. **In the dashboard.** Every modal save writes to `address_correction_log`
+   and refreshes the **Recent Corrections** table (date, user, address,
+   field, from → to, reason). The edited row flips to
+   `MANUALLY_CORRECTED` — pick that status in the filter to see only touched
+   addresses (blue on the map).
+
+2. **In the terminal.** `GeocodingService.manually_update_address` logs a
+   line like `Manually updated address ID 4711 by <name>` on each save,
+   alongside the normal `POST /_dash-update-component ... 200` access lines.
+
+3. **In the database (the audit trail of record).** Run against `housing`:
+
+   ```sql
+   SELECT l.changed_at, l.changed_by, ua.address, l.field_changed,
+          l.original_value, l.new_value, l.reason
+   FROM address_correction_log l
+   JOIN unique_addresses ua ON ua.address_id = l.address_id
+   ORDER BY l.changed_at DESC
+   LIMIT 10;
+   ```
+
+   For newly *geocoded* addresses (from the CLI or the single-address box)
+   rather than manual edits, sort by the geocode timestamp instead:
+
+   ```sql
+   SELECT address_id, address, latitude, longitude, source, status, geocoded_at
+   FROM unique_addresses
+   WHERE geocoded_at IS NOT NULL
+   ORDER BY geocoded_at DESC
+   LIMIT 10;
+   ```
+
+   Run these in DBeaver connected to `housing`, or from the shell with
+   `DB_DATABASE=housing` set (as in the index example above). One modal save
+   can produce two log rows — one for `corrected_address`, one for
+   `coordinates` — which is correct, not duplication.
+
+### 3.5 Troubleshooting
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `HERE geocoding failed with status 401: apiKey invalid. apiKey not found` | The `HERE_API_KEY` value sent is stale, mistyped, or shadowed by a shell variable | Verify the key in isolation (below); check `.env` has `HERE_API_KEY=...` with no quotes/trailing space; check `$env:HERE_API_KEY` isn't set in your shell (`load_dotenv` won't override it); regenerate the key in the HERE portal if it's dead. The geocoder keeps running OSM-only meanwhile. |
+| `HERE API daily limit reached` | Local counter hit its 950/day safety margin | Wait for the date to roll over (the counter is per-day), or geocode OSM-only for the rest of the day |
+| Browser shows "Server Unavailable / the server did not respond" | The Dash process isn't running, was swapped while running, or the console is frozen by Windows Quick Edit (text selected in the terminal) | Confirm the task is running; press Enter/Esc in its console; relaunch and hard-refresh (Ctrl+F5) |
+| `Address already in use` on launch | A previous dashboard process still owns port 8050 (or 8501 for Streamlit) | Kill the stale process — e.g. PowerShell: `Get-Process -Id (Get-NetTCPConnection -LocalPort 8050).OwningProcess | Stop-Process` |
+| Map is blank but the table has rows | Those rows aren't geocoded yet (no coordinates) | Expected under "Pending" / "Needs attention"; switch to "Geocoded" to see plotted points |
+| `ModuleNotFoundError: dash` / `streamlit` / `requests` | Dependencies not synced (e.g. after pulling the merge) | `uv sync` |
+| Required tables missing (`unique_addresses`, `address_mappings`, `housing_data`) | Running a feature tool before the backup restore, or against the wrong database | Run `uv run poe restore-backup` (§2); confirm `DB_DATABASE` is `housing` |
+
+**Verify a HERE key without the app in the way** (PowerShell):
+
+```powershell
+$key = ((Get-Content .env | Select-String '^HERE_API_KEY=').ToString() -split '=', 2)[1].Trim()
+Invoke-RestMethod "https://geocode.search.hereapi.com/v1/geocode?q=Nashville,TN&apiKey=$key"
+```
+
+JSON with an `items` array means the key is good (so a 401 in the app points
+to a shadowing shell variable). The same 401 here means the key itself is
+invalid — regenerate it and update `.env`. No database cleanup is needed
+afterward: addresses that 401'd were stored as `FAILED` with no coordinates,
+so the geocoder and the dashboard's "Needs attention" filter pick them up
+automatically on the next run.
 
 ---
 

@@ -1,0 +1,1011 @@
+from typing import Dict, Any, Optional, List, Tuple, Union, cast
+import requests
+import logging
+import json
+import time
+import os
+import re
+from datetime import datetime, date
+import hashlib
+from sqlalchemy import create_engine, text, Table, Column, Integer, String, Float, DateTime, Date, MetaData, inspect
+from dotenv import load_dotenv
+from urllib.parse import quote_plus
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("geocoding.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Load environment variables
+load_dotenv()
+
+class GeocodingService: 
+    """
+    A hybrid geocoding service that tries OpenStreetMap first and falls back to HERE.
+    """
+
+    def __init__(self) -> None:
+        """Initialize the geocoding service."""
+        # Get API keys from environment variables
+        self.here_api_key = os.environ.get("HERE_API_KEY")
+        
+        # Database connection
+        self.db_config = self._get_db_config()
+        self.engine = create_engine(
+            f"postgresql://{self.db_config['username']}:{self.db_config['password']}@"
+            f"{self.db_config['hostname']}:{self.db_config['port']}/{self.db_config['database']}"
+        )
+        
+        # Create necessary tables if they don't exist
+        self._create_tables()
+        
+        # Define API endpoints
+        self.osm_endpoint = "https://nominatim.openstreetmap.org/search"
+        self.here_endpoint = "https://geocode.search.hereapi.com/v1/geocode"
+        
+        # Initialize counters for API usage
+        self._init_api_usage_counter()
+
+    def _get_db_config(self) -> Dict[str, str]:
+        """Get database configuration from environment variables."""
+        return {
+            "hostname": os.environ.get("DB_HOSTNAME", "localhost"),
+            "port": os.environ.get("DB_PORT", "5432"),
+            "database": os.environ.get("DB_DATABASE", "postgres"),
+            "username": os.environ.get("DB_USERNAME", "postgres"),
+            "password": os.environ.get("DB_PASSWORD", "")
+        }
+
+    def _create_tables(self) -> None:
+        """Validate and create any missing tables for geocoding data."""
+        # Check if required tables exist
+        inspector = inspect(self.engine)
+        existing_tables = inspector.get_table_names()
+        
+        with self.engine.begin() as conn:
+            # Ensure unique_addresses table exists and has required columns
+            if 'unique_addresses' in existing_tables:
+                # Check for required columns and add them if missing
+                columns = [col['name'] for col in inspector.get_columns('unique_addresses')]
+                
+                if 'address_hash' not in columns:
+                    conn.execute(text("ALTER TABLE unique_addresses ADD COLUMN address_hash VARCHAR(32)"))
+                    logger.info("Added address_hash column to unique_addresses")
+                
+                if 'latitude' not in columns:
+                    conn.execute(text("ALTER TABLE unique_addresses ADD COLUMN latitude FLOAT"))
+                    logger.info("Added latitude column to unique_addresses")
+                    
+                if 'longitude' not in columns:
+                    conn.execute(text("ALTER TABLE unique_addresses ADD COLUMN longitude FLOAT"))
+                    logger.info("Added longitude column to unique_addresses")
+                    
+                if 'source' not in columns:
+                    conn.execute(text("ALTER TABLE unique_addresses ADD COLUMN source VARCHAR(10)"))
+                    logger.info("Added source column to unique_addresses")
+                    
+                if 'status' not in columns:
+                    conn.execute(text("ALTER TABLE unique_addresses ADD COLUMN status VARCHAR(20)"))
+                    logger.info("Added status column to unique_addresses")
+                    
+                if 'confidence' not in columns:
+                    conn.execute(text("ALTER TABLE unique_addresses ADD COLUMN confidence FLOAT"))
+                    logger.info("Added confidence column to unique_addresses")
+                    
+                if 'corrected_address' not in columns:
+                    conn.execute(text("ALTER TABLE unique_addresses ADD COLUMN corrected_address TEXT"))
+                    logger.info("Added corrected_address column to unique_addresses")
+                    
+                if 'geocoded_at' not in columns:
+                    conn.execute(text("ALTER TABLE unique_addresses ADD COLUMN geocoded_at TIMESTAMP"))
+                    logger.info("Added geocoded_at column to unique_addresses")
+                    
+                if 'last_updated' not in columns:
+                    conn.execute(text("ALTER TABLE unique_addresses ADD COLUMN last_updated TIMESTAMP"))
+                    logger.info("Added last_updated column to unique_addresses")
+            else:
+                logger.error("unique_addresses table doesn't exist. Please run the setup script first.")
+                raise Exception("unique_addresses table not found")
+            
+            # Create API usage table if it doesn't exist
+            if 'api_usage' not in existing_tables:
+                metadata = MetaData()
+                api_usage = Table(
+                    'api_usage', 
+                    metadata,
+                    Column('id', Integer, primary_key=True),
+                    Column('api_name', String, nullable=False),
+                    Column('request_date', Date, nullable=False),
+                    Column('request_count', Integer, default=0),
+                    Column('last_updated', DateTime)
+                )
+                api_usage.create(conn)
+                logger.info("Created api_usage table")
+                
+                # Initialize API usage counters
+                conn.execute(text("""
+                    INSERT INTO api_usage (api_name, request_date, request_count, last_updated)
+                    VALUES ('HERE', CURRENT_DATE, 0, NOW())
+                    ON CONFLICT (api_name, request_date) DO NOTHING
+                """))
+                
+                conn.execute(text("""
+                    INSERT INTO api_usage (api_name, request_date, request_count, last_updated)
+                    VALUES ('OSM', CURRENT_DATE, 0, NOW())
+                    ON CONFLICT (api_name, request_date) DO NOTHING
+                """))
+            
+            # Create address correction log if it doesn't exist
+            if 'address_correction_log' not in existing_tables:
+                metadata = MetaData()
+                address_correction_log = Table(
+                    'address_correction_log', 
+                    metadata,
+                    Column('id', Integer, primary_key=True),
+                    Column('address_id', Integer, nullable=False),
+                    Column('original_value', String),
+                    Column('new_value', String),
+                    Column('field_changed', String),
+                    Column('changed_by', String),
+                    Column('changed_at', DateTime),
+                    Column('reason', String)
+                )
+                address_correction_log.create(conn)
+                logger.info("Created address_correction_log table")
+                
+            # Create spatial column if PostGIS is available
+            try:
+                conn.execute(text("""
+                    CREATE EXTENSION IF NOT EXISTS postgis;
+                    ALTER TABLE unique_addresses ADD COLUMN IF NOT EXISTS geom geometry(Point, 4326);
+                    CREATE INDEX IF NOT EXISTS idx_unique_addresses_geom ON unique_addresses USING GIST(geom);
+                """))
+                logger.info("Set up PostGIS extension and geometry column")
+            except Exception as e:
+                logger.warning(f"Could not set up PostGIS extension: {e}")
+
+    def _init_api_usage_counter(self) -> None:
+        """Load (or create) today's persistent API usage counters."""
+        today: date = date.today()
+        # engine.begin() commits; the old engine.connect() rolled the INSERT
+        # back on exit, so today's row never existed and no usage persisted.
+        with self.engine.begin() as conn:
+            for api_name in ("HERE", "OSM"):
+                conn.execute(text("""
+                    INSERT INTO api_usage (api_name, request_date, request_count, last_updated)
+                    VALUES (:api, :today, 0, NOW())
+                    ON CONFLICT (api_name, request_date) DO NOTHING
+                """), {"api": api_name, "today": today})
+            row = conn.execute(text("""
+                SELECT request_count FROM api_usage
+                WHERE api_name = 'HERE' AND request_date = :today
+            """), {"today": today}).fetchone()
+            self.here_daily_requests: int = int(row[0]) if row else 0
+        logger.info(f"HERE API usage for today ({today}): {self.here_daily_requests} requests")
+
+    def _increment_api_usage(self, api_name: str) -> None:
+        """Increment today's counter; the DB value is authoritative."""
+        today: date = date.today()
+        with self.engine.begin() as conn:
+            row = conn.execute(text("""
+                INSERT INTO api_usage (api_name, request_date, request_count, last_updated)
+                VALUES (:api, :today, 1, NOW())
+                ON CONFLICT (api_name, request_date)
+                DO UPDATE SET request_count = api_usage.request_count + 1,
+                            last_updated = NOW()
+                RETURNING request_count
+            """), {"api": api_name, "today": today}).fetchone()
+        if api_name == "HERE" and row is not None:
+            self.here_daily_requests = int(row[0])
+        logger.info(
+            f"Incremented {api_name} API usage counter. "
+            f"New count: {self.here_daily_requests if api_name == 'HERE' else 'N/A'}"
+        )
+        
+    def _check_here_usage_limit(self) -> bool:
+        """Check if we've reached the HERE API daily limit."""
+        if self.here_daily_requests >= 950:  # Use 950 as a safety margin
+            logger.warning(f"HERE API daily limit approaching: {self.here_daily_requests}/1000 requests")
+            return False
+        return True
+
+    def _calculate_address_hash(self, address_standardized: str) -> str:
+        """Calculate a hash for an address string."""
+        # Normalize the address (remove extra spaces, convert to lowercase)
+        normalized_address = ' '.join(address_standardized.lower().split())
+        return hashlib.md5(normalized_address.encode()).hexdigest()
+
+    def _check_cache(self, address_id: int) -> Optional[Dict[str, Any]]:
+        """Check if an address has already been geocoded based on address_id."""
+        with self.engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT address_id, address_standardized, city, corrected_address, latitude, longitude, 
+                       confidence, source, status
+                FROM unique_addresses 
+                WHERE address_id = :address_id
+            """), {"address_id": address_id})
+            
+            row = result.fetchone()
+            
+            if row and (row[4] is not None and row[5] is not None):  # Check if latitude and longitude are not null
+                return {
+                    "id": row[0],
+                    "original_address": f"{row[1]}, {row[2]}" if row[2] else row[1],  # Combine address and city
+                    "corrected_address": row[3],
+                    "latitude": row[4],
+                    "longitude": row[5],
+                    "confidence": row[6],
+                    "source": row[7],
+                    "status": row[8],
+                    "cached": True
+                }
+                
+        return None
+    
+    def _get_full_address(self, address_id: int) -> Tuple[str, str, str]:
+        """Get the full address (address_standardized + city + state) from unique_addresses table."""
+        with self.engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT address_standardized, city FROM unique_addresses 
+                WHERE address_id = :address_id
+            """), {"address_id": address_id})
+            
+            row = result.fetchone()
+            
+            if row:
+                address_standardized = row[0]
+                city = row[1] if row[1] else ""
+                
+                # Check if state is already present in the address
+                has_tn = re.search(r'\bTN\b|\bTennessee\b', f"{address_standardized}, {city}", re.IGNORECASE) is not None
+                
+                # Add the state if not present
+                if not has_tn:
+                    full_address = f"{address_standardized}, {city}, TN" if city else f"{address_standardized}, TN"
+                else:
+                    full_address = f"{address_standardized}, {city}" if city else address_standardized
+                    
+                return address_standardized, city, full_address
+            
+            return "", "", ""
+
+    def geocode_with_osm(self, full_address: str) -> Dict[str, Any]:
+        """
+        Geocode an address using OpenStreetMap's Nominatim API.
+        
+        Args:
+            full_address: The complete address to geocode
+            
+        Returns:
+            A dictionary with geocoding results
+        """
+        logger.info(f"Geocoding with OSM: {full_address}")
+        
+        # Add TN to address if not present
+        if not re.search(r'\bTN\b|\bTennessee\b', full_address, re.IGNORECASE):
+            full_address = f"{full_address}, TN, USA"
+
+        try:
+            # Add delay to respect Nominatim usage policy
+            time.sleep(1)
+            
+            # ONLY use the 'q' parameter - no structured parameters
+            params = {
+                "q": full_address,
+                "format": "json",
+                "addressdetails": 1,
+                "limit": 1,
+                "accept-language": "en",
+                "countrycodes": "us"  # This is not a structured parameter
+            }
+            
+            headers = {
+                "User-Agent": "NashvilleHousingDataCleaning/1.0"
+            }
+            
+            response = requests.get(self.osm_endpoint, params=params, headers=headers)
+            
+            if response.status_code == 200:
+                results = response.json()
+                
+                if results and len(results) > 0:
+                    result = results[0]
+                    
+                    # Verify the result is in Tennessee
+                    address = result.get("address", {})
+                    state = address.get("state", "")
+                    
+                    if not state or state.lower() not in ('tennessee', 'tn'):
+                        logger.warning(f"OSM result not in Tennessee: {full_address}")
+                        return {
+                            "status": "FAILED",
+                            "error": "Address not in Tennessee",
+                            "source": "OSM"
+                        }
+                    
+                    # Calculate confidence based on various factors
+                    confidence = min(float(result.get("importance", 0.5)), 1.0)
+                    
+                    return {
+                        "latitude": float(result["lat"]),
+                        "longitude": float(result["lon"]),
+                        "match": result.get("display_name", full_address),
+                        "confidence": confidence,
+                        "source": "OSM",
+                        "status": "GEOCODED",
+                        "raw_response": result
+                    }
+                else:
+                    logger.warning(f"OSM geocoding returned no results for: {full_address}")
+                    return {
+                        "status": "FAILED",
+                        "error": "No results found",
+                        "source": "OSM"
+                    }
+            else:
+                logger.error(f"OSM geocoding failed with status {response.status_code}: {response.text}")
+                return {
+                    "status": "FAILED",
+                    "error": f"API error: {response.status_code}",
+                    "source": "OSM"
+                }
+                
+        except Exception as e:
+            logger.error(f"Error geocoding with OSM: {e}")
+            return {
+                "status": "FAILED",
+                "error": str(e),
+                "source": "OSM"
+            }
+
+    def geocode_with_here(self, full_address: str) -> Dict[str, Any]:
+        """
+        Geocode an address using HERE API.
+        
+        Args:
+            full_address: The complete address to geocode
+            
+        Returns:
+            A dictionary with geocoding results
+        """
+        # Check if we have an API key
+        if not self.here_api_key:
+            logger.error("HERE API key not found")
+            return {
+                "status": "FAILED",
+                "error": "HERE API key not configured",
+                "source": "HERE"
+            }
+        
+        # Add TN to address if not present
+        if not re.search(r'\bTN\b|\bTennessee\b', full_address, re.IGNORECASE):
+            full_address = f"{full_address}, TN, USA"
+        
+        # Check usage limits
+        if not self._check_here_usage_limit():
+            logger.error("HERE API daily limit reached")
+            return {
+                "status": "FAILED",
+                "error": "Daily API limit reached",
+                "source": "HERE"
+            }
+        
+        logger.info(f"Geocoding with HERE: {full_address}")
+        
+        try:
+            # Add delay to respect usage policy
+            time.sleep(1)
+            # Remove the 'in' parameter completely and rely on address specification
+            params = {
+                "q": full_address,
+                "apiKey": self.here_api_key
+            }
+            
+            response: requests.Response = requests.get(self.here_endpoint, params=params)
+
+            if response.status_code in (401, 403):
+                # Credential problem: no retry will succeed until .env is fixed.
+                # Disable HERE for the rest of this run instead of failing per-address.
+                logger.error(
+                    f"HERE API rejected the key ({response.status_code}); "
+                    "disabling HERE fallback for this run. Fix HERE_API_KEY in .env."
+                )
+                self.here_api_key = None  # geocode_with_here now short-circuits
+                return {
+                    "status": "FAILED",
+                    "error": f"HERE API key rejected ({response.status_code})",
+                    "source": "HERE",
+                }
+
+            # Count only requests that actually reached the service with valid auth
+            self._increment_api_usage("HERE")
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if data.get("items") and len(data["items"]) > 0:
+                    item = data["items"][0]
+                    position = item.get("position", {})
+                    
+                    # Verify the result is in Tennessee
+                    address = item.get("address", {})
+                    state = address.get("state", "")
+                    
+                    # Look for Tennessee in address components
+                    if not state or (state.lower() != "tennessee" and state != "TN"):
+                        title = item.get("title", "")
+                        if not re.search(r'\bTN\b|\bTennessee\b', title, re.IGNORECASE):
+                            logger.warning(f"HERE result not in Tennessee: {full_address}")
+                            return {
+                                "status": "FAILED",
+                                "error": "Address not in Tennessee",
+                                "source": "HERE"
+                            }
+                    
+                    # HERE provides a score for relevance (0-1)
+                    confidence = item.get("scoring", {}).get("queryScore", 0.5)
+                    
+                    return {
+                        "latitude": position.get("lat"),
+                        "longitude": position.get("lng"),
+                        "match": item.get("title", full_address),
+                        "confidence": confidence,
+                        "source": "HERE",
+                        "status": "GEOCODED",
+                        "raw_response": item
+                    }
+                else:
+                    logger.warning(f"HERE geocoding returned no results for: {full_address}")
+                    return {
+                        "status": "FAILED",
+                        "error": "No results found",
+                        "source": "HERE"
+                    }
+            else:
+                logger.error(f"HERE geocoding failed with status {response.status_code}: {response.text}")
+                return {
+                    "status": "FAILED",
+                    "error": f"API error: {response.status_code}",
+                    "source": "HERE"
+                }
+                
+        except Exception as e:
+            logger.error(f"Error geocoding with HERE: {e}")
+            return {
+                "status": "FAILED",
+                "error": str(e),
+                "source": "HERE"
+            }
+
+    def geocode_address(self, address_id_or_string: Union[int, str]) -> Dict[str, Any]:
+        """
+        Geocode an address using the hybrid approach.
+        
+        Args:
+            address_id_or_string: Either an address_id from unique_addresses table
+                              or a direct address string to geocode
+            
+        Returns:
+            A dictionary with geocoding results
+        """
+        address_id: Optional[int] = None
+        full_address: Optional[str] = None
+        
+        # Determine if we have an ID or a string address
+        if isinstance(address_id_or_string, int):
+            address_id = address_id_or_string
+            # Check cache first
+            cached_result = self._check_cache(address_id)
+            if cached_result:
+                logger.info(f"Cache hit for address_id: {address_id}")
+                cached_result["from_cache"] = True
+                return cached_result
+            
+            # Get the full address (address_standardized + city)
+            address_standardized, city, full_address = self._get_full_address(address_id)
+            
+            if not full_address:
+                logger.warning(f"Address not found for address_id: {address_id}")
+                return {
+                    "status": "FAILED",
+                    "error": "Address not found",
+                    "source": None
+                }
+        else:
+            # We have a direct address string
+            full_address = address_id_or_string
+            
+            # Calculate hash to check if we've seen this address before
+            address_hash = self._calculate_address_hash(full_address)
+            
+            # Check if this address exists in our database
+            with self.engine.connect() as conn:
+                result = conn.execute(text("""
+                    SELECT address_id, latitude, longitude, confidence, source, status, corrected_address
+                    FROM unique_addresses
+                    WHERE address_hash = :hash
+                """), {"hash": address_hash}).fetchone()
+                
+                if result and result[1] is not None and result[2] is not None:
+                    # We found a geocoded address with the same hash
+                    logger.info(f"Cache hit for address hash: {address_hash}")
+                    return {
+                        "id": result[0],
+                        "latitude": result[1],
+                        "longitude": result[2],
+                        "confidence": result[3],
+                        "source": result[4],
+                        "status": result[5],
+                        "match": result[6] or full_address,
+                        "from_cache": True
+                    }
+                elif result:
+                    # We found the address but it's not geocoded yet
+                    address_id = result[0]
+        
+        if not full_address:
+            logger.error("No address provided for geocoding")
+            return {
+                "status": "FAILED",
+                "error": "No address provided",
+                "source": None
+            }
+        
+        # Try OpenStreetMap first
+        osm_result = self.geocode_with_osm(full_address)
+        
+        # If OSM geocoding was successful, return the result
+        if osm_result.get("status") == "GEOCODED":
+            logger.info(f"Successful geocoding with OSM: {full_address}")
+            
+            # If we have an address_id, store the result
+            if address_id:
+                self.store_geocoding_result(address_id, osm_result)
+            else:
+                # Create a new address entry
+                with self.engine.begin() as conn:
+                    # Extract city and state if possible
+                    address_parts = full_address.split(",")
+                    address_standardized = address_parts[0].strip()
+                    city = address_parts[1].strip() if len(address_parts) > 1 else None
+                    
+                    result = conn.execute(text("""
+                        INSERT INTO unique_addresses 
+                        (address_standardized, city, corrected_address, latitude, longitude, 
+                         confidence, source, status, geocoded_at, address_hash)
+                        VALUES 
+                        (:address_standardized, :city, :corrected, :lat, :lng, 
+                         :confidence, :source, :status, :now, :hash)
+                        RETURNING address_id
+                    """), {
+                        "address_standardized": address_standardized,
+                        "city": city,
+                        "corrected": osm_result.get("match"),
+                        "lat": osm_result.get("latitude"),
+                        "lng": osm_result.get("longitude"),
+                        "confidence": osm_result.get("confidence", 0.0),
+                        "source": "OSM",
+                        "status": "GEOCODED",
+                        "now": datetime.now(),
+                        "hash": self._calculate_address_hash(full_address)
+                    })
+                    
+                    address_id = result.fetchone()[0]
+                    osm_result["id"] = address_id
+                    
+                    # Update geometry if we have coordinates and PostGIS is available
+                    try:
+                        conn.execute(text("""
+                            UPDATE unique_addresses
+                            SET geom = ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)
+                            WHERE address_id = :id
+                        """), {
+                            "longitude": osm_result.get("longitude"),
+                            "latitude": osm_result.get("latitude"),
+                            "id": address_id
+                        })
+                    except Exception as e:
+                        logger.warning(f"Could not update geometry: {e}")
+            
+            return osm_result
+        
+        # If OSM failed, try HERE
+        logger.info(f"OSM geocoding failed, trying HERE: {full_address}")
+        here_result = self.geocode_with_here(full_address)
+        
+        # Store the result (whether successful or not)
+        if address_id:
+            self.store_geocoding_result(address_id, here_result)
+        elif here_result.get("status") == "GEOCODED":
+            # Create a new address entry
+            with self.engine.begin() as conn:
+                # Extract city and state if possible
+                address_parts = full_address.split(",")
+                address_standardized = address_parts[0].strip()
+                city = address_parts[1].strip() if len(address_parts) > 1 else None
+                
+                result = conn.execute(text("""
+                    INSERT INTO unique_addresses 
+                    (address_standardized, city, corrected_address, latitude, longitude, 
+                     confidence, source, status, geocoded_at, address_hash)
+                    VALUES 
+                    (:address_standardized, :city, :corrected, :lat, :lng, 
+                     :confidence, :source, :status, :now, :hash)
+                    RETURNING address_id
+                """), {
+                    "address_standardized": address_standardized,
+                    "city": city,
+                    "corrected": here_result.get("match"),
+                    "lat": here_result.get("latitude"),
+                    "lng": here_result.get("longitude"),
+                    "confidence": here_result.get("confidence", 0.0),
+                    "source": "HERE",
+                    "status": "GEOCODED",
+                    "now": datetime.now(),
+                    "hash": self._calculate_address_hash(full_address)
+                })
+                
+                address_id = result.fetchone()[0]
+                here_result["id"] = address_id
+                
+                # Update geometry if we have coordinates and PostGIS is available
+                try:
+                    conn.execute(text("""
+                        UPDATE unique_addresses
+                        SET geom = ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)
+                        WHERE address_id = :id
+                    """), {
+                        "longitude": here_result.get("longitude"),
+                        "latitude": here_result.get("latitude"),
+                        "id": address_id
+                    })
+                except Exception as e:
+                    logger.warning(f"Could not update geometry: {e}")
+        
+        return here_result
+
+    def store_geocoding_result(self, address_id: int, result: Dict[str, Any]) -> None:
+        """
+        Store geocoding results in the database.
+        
+        Args:
+            address_id: The address_id from unique_addresses table
+            result: The geocoding result dictionary
+        """
+        # Extract relevant data
+        latitude = result.get("latitude")
+        longitude = result.get("longitude")
+        corrected_address = result.get("match")
+        confidence = result.get("confidence", 0.0)
+        source = result.get("source")
+        status = result.get("status", "FAILED")
+        
+        with self.engine.begin() as conn:
+            # Check if this address exists
+            existing = conn.execute(text("""
+                SELECT address_id FROM unique_addresses WHERE address_id = :address_id
+            """), {"address_id": address_id}).fetchone()
+            
+            now = datetime.now()
+            
+            if existing:
+                # Update existing record
+                conn.execute(text("""
+                    UPDATE unique_addresses
+                    SET corrected_address = :corrected_address,
+                        latitude = :latitude,
+                        longitude = :longitude,
+                        confidence = :confidence,
+                        source = :source,
+                        status = :status,
+                        last_updated = :now,
+                        geocoded_at = CASE WHEN geocoded_at IS NULL THEN :now ELSE geocoded_at END
+                    WHERE address_id = :address_id
+                """), {
+                    "corrected_address": corrected_address,
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "confidence": confidence,
+                    "source": source,
+                    "status": status,
+                    "now": now,
+                    "address_id": address_id
+                })
+                
+                # Update geometry if we have coordinates and PostGIS is available
+                if latitude and longitude:
+                    try:
+                        conn.execute(text("""
+                            UPDATE unique_addresses
+                            SET geom = ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)
+                            WHERE address_id = :address_id
+                        """), {
+                            "longitude": longitude,
+                            "latitude": latitude,
+                            "address_id": address_id
+                        })
+                    except Exception as e:
+                        logger.warning(f"Could not update geometry: {e}")
+                        
+                logger.info(f"Updated geocoding result for address_id: {address_id}")
+            else:
+                logger.warning(f"Address ID not found: {address_id}")
+
+    def bulk_geocode_addresses(self, address_ids: List[int], batch_size: int = 100) -> List[Dict[str, Any]]:
+        """
+        Geocode multiple addresses in batch.
+        
+        Args:
+            address_ids: List of address_ids from unique_addresses table
+            batch_size: Number of addresses to process in each batch
+            
+        Returns:
+            List of geocoding results
+        """
+        results = []
+        total = len(address_ids)
+        
+        logger.info(f"Starting bulk geocoding of {total} addresses")
+        
+        for i in range(0, total, batch_size):
+            batch = address_ids[i:i+batch_size]
+            batch_results = []
+            
+            logger.info(f"Processing batch {i//batch_size + 1}/{(total-1)//batch_size + 1} ({len(batch)} addresses)")
+            
+            for address_id in batch:
+                result = self.geocode_address(address_id)
+                batch_results.append(result)
+                
+                # Brief pause between requests to be nice to the APIs
+                time.sleep(0.2)
+            
+            results.extend(batch_results)
+            
+            # Log progress
+            success_count = sum(1 for r in batch_results if r.get("status") == "GEOCODED")
+            logger.info(f"Batch complete: {success_count}/{len(batch)} successful ({i+len(batch)}/{total} total)")
+            
+            # Check HERE usage limit
+            if not self._check_here_usage_limit():
+                logger.warning("HERE API daily limit reached, stopping batch processing")
+                break
+        
+        return results
+
+    def get_recent_geocoding_results(self, limit: int = 100, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Get recent geocoding results from the database.
+        
+        Args:
+            limit: Maximum number of results to return
+            status: Filter by status (GEOCODED, FAILED, MANUALLY_CORRECTED)
+            
+        Returns:
+            List of geocoding results
+        """
+        query = """
+            SELECT 
+                address_id, address_standardized, city, corrected_address, latitude, longitude,
+                confidence, source, status, geocoded_at
+            FROM unique_addresses
+        """
+        
+        params: Dict[str, Any] = {"limit": limit}
+        
+        if status:
+            query += " WHERE status = :status"
+            params["status"] = status
+            
+        query += " ORDER BY geocoded_at DESC LIMIT :limit"
+        
+        with self.engine.connect() as conn:
+            rows = conn.execute(text(query), params).fetchall()
+            
+            results = []
+            for row in rows:
+                full_address = f"{row[1]}, {row[2]}" if row[2] else row[1]
+                results.append({
+                    "id": row[0],
+                    "original_address": full_address,
+                    "corrected_address": row[3],
+                    "latitude": row[4],
+                    "longitude": row[5],
+                    "confidence": row[6],
+                    "source": row[7],
+                    "status": row[8],
+                    "geocoded_at": row[9]
+                })
+                
+            return results
+
+    def get_api_usage_stats(self) -> Dict[str, Any]:
+        """
+        Get API usage statistics.
+        
+        Returns:
+            Dictionary with API usage statistics
+        """
+        today = date.today()
+        
+        with self.engine.connect() as conn:
+            # Get today's usage
+            today_result = conn.execute(text("""
+                SELECT api_name, request_count
+                FROM api_usage
+                WHERE request_date = :today
+            """), {"today": today}).fetchall()
+            
+            today_usage = {row[0]: row[1] for row in today_result}
+            
+            # Get historical usage
+            historical_result = conn.execute(text("""
+                SELECT api_name, request_date, request_count
+                FROM api_usage
+                WHERE request_date < :today
+                ORDER BY request_date DESC
+                LIMIT 30
+            """), {"today": today}).fetchall()
+            
+            historical_usage = {}
+            for row in historical_result:
+                api_name, request_date, count = row
+                if api_name not in historical_usage:
+                    historical_usage[api_name] = []
+                historical_usage[api_name].append({"date": request_date, "count": count})
+            
+            return {
+                "today_usage": today_usage,
+                "historical_usage": historical_usage,
+                "here_daily_limit": 1000,
+                "here_daily_remaining": 1000 - today_usage.get("HERE", 0)
+            }
+
+    def manually_update_address(self, 
+                               address_id: int, 
+                               corrected_address: str, 
+                               latitude: Optional[float], 
+                               longitude: Optional[float], 
+                               changed_by: str, 
+                               reason: str) -> bool:
+        """
+        Manually update an address's geocoding information.
+        
+        Args:
+            address_id: ID of the address to update
+            corrected_address: New corrected address
+            latitude: New latitude
+            longitude: New longitude
+            changed_by: Name of the person making the change
+            reason: Reason for the change
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            with self.engine.begin() as conn:
+                # Get current values for logging changes
+                current = conn.execute(text("""
+                    SELECT address_standardized, city, corrected_address, latitude, longitude
+                    FROM unique_addresses
+                    WHERE address_id = :id
+                """), {"id": address_id}).fetchone()
+                
+                if not current:
+                    logger.error(f"Address ID {address_id} not found")
+                    return False
+                
+                now = datetime.now()
+                
+                # Update the address
+                conn.execute(text("""
+                    UPDATE unique_addresses
+                    SET corrected_address = :corrected_address,
+                        latitude = :latitude,
+                        longitude = :longitude,
+                        status = 'MANUALLY_CORRECTED',
+                        last_updated = :now
+                    WHERE address_id = :id
+                """), {
+                    "corrected_address": corrected_address,
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "now": now,
+                    "id": address_id
+                })
+                
+                # Update geometry if PostGIS is available
+                if latitude is not None and longitude is not None:
+                    try:
+                        conn.execute(text("""
+                            UPDATE unique_addresses
+                            SET geom = ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)
+                            WHERE address_id = :id
+                        """), {
+                            "longitude": longitude,
+                            "latitude": latitude,
+                            "id": address_id
+                        })
+                    except Exception as e:
+                        logger.warning(f"Could not update geometry: {e}")
+                
+                # Log the changes
+                if current[2] != corrected_address:
+                    conn.execute(text("""
+                        INSERT INTO address_correction_log
+                        (address_id, original_value, new_value, field_changed, changed_by, changed_at, reason)
+                        VALUES
+                        (:address_id, :original_value, :new_value, :field_changed, :changed_by, :now, :reason)
+                    """), {
+                        "address_id": address_id,
+                        "original_value": current[2],
+                        "new_value": corrected_address,
+                        "field_changed": "corrected_address",
+                        "changed_by": changed_by,
+                        "now": now,
+                        "reason": reason
+                    })
+                
+                if (current[3] != latitude or current[4] != longitude) and latitude is not None and longitude is not None:
+                    old_coords = f"({current[3]}, {current[4]})"
+                    new_coords = f"({latitude}, {longitude})"
+                    
+                    conn.execute(text("""
+                        INSERT INTO address_correction_log
+                        (address_id, original_value, new_value, field_changed, changed_by, changed_at, reason)
+                        VALUES
+                        (:address_id, :original_value, :new_value, :field_changed, :changed_by, :now, :reason)
+                    """), {
+                        "address_id": address_id,
+                        "original_value": old_coords,
+                        "new_value": new_coords,
+                        "field_changed": "coordinates",
+                        "changed_by": changed_by,
+                        "now": now,
+                        "reason": reason
+                    })
+                
+                logger.info(f"Manually updated address ID {address_id} by {changed_by}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error manually updating address_standardized: {e}")
+            return False
+
+
+if __name__ == "__main__":
+    # Example usage
+    service = GeocodingService()
+    
+    # Get all address IDs that need geocoding
+    with service.engine.connect() as conn:
+        results = conn.execute(text("""
+            SELECT address_id FROM unique_addresses 
+            WHERE (latitude IS NULL OR longitude IS NULL)
+            LIMIT 5
+        """)).fetchall()
+        
+        address_ids = [row[0] for row in results]
+    
+    # Geocode them
+    for address_id in address_ids:
+        result = service.geocode_address(address_id)
+        print(f"Address ID {address_id}: {result.get('status')}")
+        
+        if result.get('status') == 'GEOCODED':
+            print(f"  Coordinates: ({result.get('latitude')}, {result.get('longitude')})")
+            print(f"  Source: {result.get('source')}")
+        else:
+            print(f"  Error: {result.get('error')}")
+        
+    # Get API usage stats
+    stats = service.get_api_usage_stats()
+    print("\nAPI Usage Stats:")
+    print(f"  TODAY - HERE: {stats['today_usage'].get('HERE', 0)}/1000")
+    print(f"  TODAY - OSM: {stats['today_usage'].get('OSM', 0)}")
