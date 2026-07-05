@@ -13,7 +13,7 @@ dev = [
   "pytest>=9.0",
   "black>=25.1.0",
   "pyright>=1.1.400",
-  "json5>=0.9"
+  "agentic-tools @ git+https://github.com/swiftpostlabs/agentic-tools.git",
 ]
 
 [build-system]
