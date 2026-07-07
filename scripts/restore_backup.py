@@ -76,19 +76,27 @@ def main() -> None:
 
     admin = [
         psql,
-        "--host", cfg["hostname"],
-        "--port", cfg["port"],
-        "--username", cfg["username"],
-        "--dbname", cfg["database"],
+        "--host",
+        cfg["hostname"],
+        "--port",
+        cfg["port"],
+        "--username",
+        cfg["username"],
+        "--dbname",
+        cfg["database"],
         "-X",
-        "-v", "ON_ERROR_STOP=1",
+        "-v",
+        "ON_ERROR_STOP=1",
     ]
 
-    exists = run(
-        admin + ["-tAc", f"SELECT 1 FROM pg_database WHERE datname = '{args.dbname}'"],
-        env=env,
-        capture=True,
-    ).stdout.strip() == "1"
+    exists = (
+        run(
+            admin + ["-tAc", f"SELECT 1 FROM pg_database WHERE datname = '{args.dbname}'"],
+            env=env,
+            capture=True,
+        ).stdout.strip()
+        == "1"
+    )
 
     if exists and not args.recreate:
         print(
@@ -114,14 +122,19 @@ def main() -> None:
     run(
         [
             pg_restore,
-            "--host", cfg["hostname"],
-            "--port", cfg["port"],
-            "--username", cfg["username"],
-            "--dbname", args.dbname,
+            "--host",
+            cfg["hostname"],
+            "--port",
+            cfg["port"],
+            "--username",
+            cfg["username"],
+            "--dbname",
+            args.dbname,
             "--no-owner",
             "--no-privileges",
             "--exit-on-error",
-            "-L", str(toc_path),
+            "-L",
+            str(toc_path),
             str(backup_path),
         ],
         env=env,

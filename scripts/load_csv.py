@@ -36,9 +36,7 @@ def load_csv_to_db(dataset_file: str, table: str, db_config: DBConfig) -> int:
     engine: Engine = build_engine(db_config)
     total_rows: int = 0
     try:
-        chunks: Iterator[pd.DataFrame] = pd.read_csv(
-            dataset_file, chunksize=1000, encoding="utf-8"
-        )
+        chunks: Iterator[pd.DataFrame] = pd.read_csv(dataset_file, chunksize=1000, encoding="utf-8")
         for index, df in enumerate(chunks):
             df.to_sql(
                 table,

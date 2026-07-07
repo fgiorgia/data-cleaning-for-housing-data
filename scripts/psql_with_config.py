@@ -24,7 +24,8 @@ def main() -> None:
     # containing spaces or shell metacharacters can never break the command.
     command: list[str] = [
         "psql",
-        "-P", "pager=off",
+        "-P",
+        "pager=off",
         f"--host={db_config['hostname']}",
         f"--username={db_config['username']}",
         f"--dbname={db_config['database']}",
