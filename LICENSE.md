@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2022 Giorgia Faedda
+Copyright (c) 2026 Giorgia Faedda
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +19,11 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+Note on data: this license covers the source code only. The Nashville
+Housing dataset is Davidson County, TN public-record data distributed via
+Kaggle under its own terms. Geocoding results derived from OpenStreetMap /
+Nominatim are © OpenStreetMap contributors, Open Database License (ODbL):
+https://www.openstreetmap.org/copyright
