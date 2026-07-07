@@ -7,13 +7,35 @@ license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.14,<4.0"
 dependencies = [
+  "pandas (>=2.2.3,<3.0.0)",
+  "sqlalchemy (>=2.0.39,<3.0.0)",
+  # psycopg (v3) replaces psycopg2, which is in maintenance mode.
+  # The [binary] extra ships a prebuilt libpq so CI needs no compiler.
+  # psycopg2-binary was removed: every engine now goes through
+  # scripts/db.py, which pins the postgresql+psycopg dialect.
+  "psycopg[binary] (>=3.2,<4.0)",
+  "folium (>=0.19.5,<0.20.0)",
+  "python-dotenv (>=1.0.1,<2.0.0)",
+  "requests>=2.34.2",
+  "dash>=4.3.0",
+  "dash-bootstrap-components>=2.0.4",
+  "streamlit>=1.58.0",
+  "plotly>=6.8.0",
+]
+
 [dependency-groups]
 dev = [
   "poethepoet>=0.34.0",
   "pytest>=9.0",
   "black>=25.1.0",
   "pyright>=1.1.400",
-  "agentic-tools @ git+https://github.com/swiftpostlabs/agentic-tools.git",
+  "json5>=0.9",
+  # Real-Postgres integration tests without touching your local server.
+  "testcontainers[postgres]>=4.8",
+  # Type stubs so mypy understands third-party APIs.
+  "pandas-stubs>=2.2",
+  "types-requests>=2.32",
+  "agentic-tools@git+https://github.com/swiftpostlabs/agentic-tools.git",
 ]
 
 [build-system]
@@ -47,36 +69,6 @@ reportUnnecessaryTypeIgnoreComment = "warning"
 [project.scripts]
 main = "my_project.main:main"
 
-[tool.poe.tasks.address-standardization]
-cmd = "python ./scripts/psql_with_config.py -f ./src/address_standardization.sql"
-
-[tool.poe.tasks.address-standardization.env]
-DB_DATABASE.default = "housing"
-
-[tool.poe.tasks.geocoder]
-cmd = "python ./src/geocoding_integration.py"
-
-[tool.poe.tasks.geocoder.env]
-DB_DATABASE.default = "housing"
-
-[tool.poe.tasks.geocoding-dashboard]
-cmd = "python ./src/geocoding_dashboard.py"
-
-[tool.poe.tasks.geocoding-dashboard.env]
-DB_DATABASE.default = "housing"
-
-[tool.poe.tasks.data-quality-check]
-cmd = "streamlit run ./scripts/data_quality_dashboard.py"
-
-[tool.poe.tasks.data-quality-check.env]
-DB_DATABASE.default = "housing"
-
-[tool.poe.tasks.show-map]
-cmd = "python ./scripts/property_map.py"
-
-[tool.poe.tasks.show-map.env]
-DB_DATABASE.default = "housing"
-
 [tool.poe.tasks]
 remove-bom = "python ./scripts/remove_bom.py --input='./data/dataset.csv' --output='./data/dataset_no_bom.csv'"
 load-csv = "python ./scripts/load_csv.py --datasetFile='./data/dataset_no_bom.csv' --table='HousingDataRaw'"
@@ -84,20 +76,26 @@ ensure-out-dir = "python -c \"import os; os.makedirs('out', exist_ok=True)\""
 sql-install-fuzzystrmatch = "python ./scripts/psql_with_config.py -c \"CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;\""
 sql-cleanup = "python ./scripts/psql_with_config.py -f ./src/cleaning.sql"
 data-cleaning-pipeline = [
-  "ensure-out-dir", 
-  "remove-bom", 
+  "ensure-out-dir",
+  "remove-bom",
   "load-csv",
-  "sql-install-fuzzystrmatch", 
-  "sql-cleanup", 
+  "sql-install-fuzzystrmatch",
+  "sql-cleanup",
 ]
 sql-cleanup-keep = "python ./scripts/psql_with_config.py -v KEEP_TABLES=1 -f ./src/cleaning.sql"
 data-cleaning-pipeline-keep = [
-    "ensure-out-dir", 
-    "remove-bom", 
-    "load-csv", 
-    "sql-install-fuzzystrmatch", 
-    "sql-cleanup-keep"
-    ]
+  "ensure-out-dir",
+  "remove-bom",
+  "load-csv",
+  "sql-install-fuzzystrmatch",
+  "sql-cleanup-keep",
+]
+
+address-standardization = { cmd = "python ./scripts/psql_with_config.py -f ./src/address_standardization.sql", env = { DB_DATABASE.default = "housing" } }
+geocoder = { cmd = "python ./src/geocoding_integration.py", env = { DB_DATABASE.default = "housing" } }
+geocoding-dashboard = { cmd = "python ./src/geocoding_dashboard.py", env = { DB_DATABASE.default = "housing" } }
+data-quality-check = { cmd = "streamlit run ./scripts/data_quality_dashboard.py", env = { DB_DATABASE.default = "housing" } }
+show-map = { cmd = "python ./scripts/property_map.py", env = { DB_DATABASE.default = "housing" } }
 
 # Provision the full enriched database (PostGIS, geocoding, address functions)
 # by restoring data/migration_dump.backup into a dedicated database. See README.

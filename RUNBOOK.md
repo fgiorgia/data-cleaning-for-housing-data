@@ -235,7 +235,7 @@ these under Schemas → public → Tables.
 
 ## 3. Feature tools (the `housing` database)
 
-These tasks were merged in from the `-copy` repo. They all read or write
+These tasks operate on the restored `housing` database. They all read or write
 `unique_addresses` / `address_mappings` / `housing_data`, which **only exist
 in `housing`**, so each task defaults `DB_DATABASE` to `housing`. That
 default is overridable: set `DB_DATABASE` in your shell to retarget (e.g.
