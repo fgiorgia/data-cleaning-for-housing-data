@@ -187,20 +187,30 @@ USING CASE
 	ELSE NULL
 END;
 
--- Populate missing values
--- property_address
-UPDATE housing_data hd
-SET property_address =
-	NULLIF(hd2.property_address, hd.property_address)
-	FROM housing_data hd2
-	WHERE hd.parcel_id = hd2.parcel_id AND hd.unique_id <> hd2.unique_id AND hd.property_address IS NULL;
+-- Imputation provenance: Downstream users can filter non-source data via these flags.
+-- Note: property_address_imputed indicates a localized heuristic fill from a sibling record.
+-- owner_address_imputed indicates a high-confidence, deterministic fill based on historical name and parcel matches.
+ALTER TABLE housing_data ADD COLUMN property_address_imputed boolean NOT NULL DEFAULT false;
+ALTER TABLE housing_data ADD COLUMN owner_address_imputed    boolean NOT NULL DEFAULT false;
 
--- owner_address
+-- Populate missing values, flagging every imputed row
 UPDATE housing_data hd
-SET owner_address =
-	NULLIF(hd2.property_address, hd.owner_address)
-	FROM housing_data hd2
-	WHERE hd.parcel_id = hd2.parcel_id AND hd.unique_id <> hd2.unique_id AND hd.owner_address IS NULL;
+SET property_address = hd2.property_address,
+    property_address_imputed = true
+FROM housing_data hd2
+WHERE hd.parcel_id = hd2.parcel_id
+  AND hd.unique_id <> hd2.unique_id
+  AND hd.property_address IS NULL;
+
+UPDATE housing_data hd
+SET owner_address = hd2.owner_address,
+    owner_address_imputed = true
+FROM housing_data hd2
+WHERE hd.parcel_id = hd2.parcel_id
+  AND hd.unique_id <> hd2.unique_id
+  AND hd.owner_address IS NULL
+  AND hd2.owner_address IS NOT NULL
+  AND hd.owner_name = hd2.owner_name;
 
 -- Correct misspelling addresses
 UPDATE housing_data hd
