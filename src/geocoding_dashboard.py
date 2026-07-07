@@ -1,54 +1,21 @@
 """Address Geocoding Dashboard (Dash) - fixed for the merged repo.
 
 Run with:  uv run poe geocoding-dashboard   (DB_DATABASE defaults to 'housing')
-
-What changed vs. the version migrated from the -copy repo, and why:
-
-1. Reads/writes target `unique_addresses` directly. The restored schema has
-   no `geocoded_addresses` table - geocoding results live on
-   `unique_addresses` itself - so every query here uses that table. The
-   compatibility view from the merge playbook (Section 5) is no longer
-   needed; if you created it, you can `DROP VIEW IF EXISTS geocoded_addresses;`.
-
-2. SQLAlchemy 2.0 compatibility. `get_geocoding_stats()` used `dict(row)`,
-   which SQLAlchemy 2.0 removed (Rows are tuple-like); it now uses
-   `row._mapping`. The engine URL is built with `URL.create`, so passwords
-   with special characters cannot break the connection string.
-
-3. `update_corrections` returned `conn.execute(df.to_dict("records"))` -
-   a DataFrame dict is not executable, so this callback crashed on every
-   30-second interval tick regardless of database state. It now simply
-   returns the records.
-
-4. The manual-correction write path delegates to
-   `GeocodingService.manually_update_address`, which already performs the
-   same UPDATE + PostGIS geom refresh + `address_correction_log` entries
-   against `unique_addresses` inside one transaction. The dashboard's own
-   psycopg2/RealDictCursor copy of that logic is gone (one less duplicate,
-   and no direct psycopg2 dependency here).
-
-5. Plotly map API shim. Plotly >= 5.24 replaces the Mapbox traces with
-   MapLibre ones (`px.scatter_map` / `go.Scattermap`, layout key `map`);
-   the old names are deprecated in Plotly 6. The dashboard picks whichever
-   the installed Plotly provides, and the empty-map branch no longer mixes
-   a MapLibre trace with `mapbox` layout keys (which rendered blank).
-
-6. Defensive formatting: no division by zero when the table is empty, and
-   a NULL average confidence renders as an em dash instead of raising.
 """
 
-from typing import Optional
+from typing import Any, Optional
 
 import dash
-from dash import dcc, html, Input, Output, State, dash_table
 import dash_bootstrap_components as dbc
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from sqlalchemy import URL, create_engine, text
+from dash import Input, Output, State, dash_table, dcc, html
+from sqlalchemy import text
 
-from scripts.config import get_db_config
 from geocoding_service import GeocodingService
+from scripts.config import get_db_config
+from scripts.db import get_engine
 
 # --------------------------------------------------------------------------
 # App / database setup
@@ -58,16 +25,7 @@ app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 app.title = "Address Geocoding Dashboard"
 
 db_config = get_db_config()
-engine = create_engine(
-    URL.create(
-        drivername="postgresql",  # resolves to psycopg2 (installed for this app)
-        username=db_config["username"],
-        password=db_config["password"],
-        host=db_config["hostname"],
-        port=int(db_config["port"]),
-        database=db_config["database"],
-    )
-)
+engine = get_engine()
 
 geocoding_service = GeocodingService()
 
@@ -81,7 +39,9 @@ _MAPLIBRE = hasattr(px, "scatter_map")
 # --------------------------------------------------------------------------
 
 
-def get_geocoded_addresses(limit: int = 1000, status: Optional[str] = None) -> pd.DataFrame:
+def get_geocoded_addresses(
+    limit: int = 1000, status: Optional[str] = None
+) -> pd.DataFrame:
     """Addresses with their geocoding state, newest results first."""
     query = """
     SELECT
@@ -95,7 +55,7 @@ def get_geocoded_addresses(limit: int = 1000, status: Optional[str] = None) -> p
         ua.status
     FROM unique_addresses ua
     """
-    params = {"limit": limit}
+    params: dict[str, int | str] = {"limit": limit}
     if status:
         query += " WHERE ua.status = :status"
         params["status"] = status
@@ -105,7 +65,7 @@ def get_geocoded_addresses(limit: int = 1000, status: Optional[str] = None) -> p
         return pd.read_sql(text(query), conn, params=params)
 
 
-def get_geocoding_stats() -> dict:
+def get_geocoding_stats() -> dict[str, Any]:
     """Aggregate geocoding statistics."""
     query = """
     SELECT
@@ -119,9 +79,12 @@ def get_geocoding_stats() -> dict:
     FROM unique_addresses
     """
     with engine.connect() as conn:
-        row = conn.execute(text(query)).fetchone()
-    # SQLAlchemy 2.0: Rows are tuple-like; dict(row) was removed - use _mapping.
-    return dict(row._mapping)
+        # .mappings() returns the public RowMapping API instead of the
+        # underscore-prefixed (but documented) Row._mapping attribute.
+        row = conn.execute(text(query)).mappings().fetchone()
+    if row is None:
+        raise RuntimeError("No geocoding statistics available")
+    return dict(row)
 
 
 def get_correction_logs(limit: int = 100) -> pd.DataFrame:
@@ -145,9 +108,14 @@ def get_correction_logs(limit: int = 100) -> pd.DataFrame:
         return pd.read_sql(text(query), conn, params={"limit": limit})
 
 
-def save_manual_correction(address_id: int, corrected_address: str,
-                           latitude: Optional[float], longitude: Optional[float],
-                           user: str, reason: str) -> bool:
+def save_manual_correction(
+    address_id: int,
+    corrected_address: str,
+    latitude: Optional[float],
+    longitude: Optional[float],
+    user: str,
+    reason: str,
+) -> bool:
     """Persist a manual fix via the service (UPDATE + geom + correction log)."""
     return geocoding_service.manually_update_address(
         address_id=address_id,
@@ -164,18 +132,18 @@ def save_manual_correction(address_id: int, corrected_address: str,
 # --------------------------------------------------------------------------
 
 
-def _count_with_pct(part, total) -> str:
-    part = int(part or 0)
-    total = int(total or 0)
-    if total == 0:
-        return f"{part} (0.0%)"
-    return f"{part} ({part / total * 100:.1f}%)"
+def _count_with_pct(part: int | None, total: int | None) -> str:
+    part_count = int(part or 0)
+    total_count = int(total or 0)
+    if total_count == 0:
+        return f"{part_count} (0.0%)"
+    return f"{part_count} ({part_count / total_count * 100:.1f}%)"
 
 
-def _avg_confidence_label(avg) -> str:
+def _avg_confidence_label(avg: float | None) -> str:
     if avg is None:
         return "\u2014"  # em dash: no confidence values yet
-    return f"{float(avg) * 100:.1f}%"
+    return f"{avg * 100:.1f}%"
 
 
 def _map_figure(map_df: Optional[pd.DataFrame]) -> go.Figure:
@@ -224,194 +192,293 @@ def _map_figure(map_df: Optional[pd.DataFrame]) -> go.Figure:
 # Layout (unchanged from the migrated version)
 # --------------------------------------------------------------------------
 
-app.layout = dbc.Container([
-    dbc.Row([
-        dbc.Col([
-            html.H1("Address Geocoding Dashboard", className="text-center my-4"),
-            html.Hr()
-        ])
-    ]),
-
-    dbc.Row([
-        dbc.Col([
-            html.H4("Geocoding Statistics"),
-            html.Div(id="stats-container")
-        ], width=12)
-    ]),
-
-    dbc.Row([
-        dbc.Col([
-            html.H4("Address Map"),
-            dcc.Graph(id="address-map", style={"height": "600px"})
-        ], width=8),
-
-        dbc.Col([
-            html.H4("Status Filter"),
-            dcc.Dropdown(
-                id="status-filter",
-                options=[
-                    {"label": "All", "value": "ALL"},
-                    {"label": "Geocoded", "value": "GEOCODED"},
-                    {"label": "Failed", "value": "FAILED"},
-                    {"label": "Manually Corrected", "value": "MANUALLY_CORRECTED"}
-                ],
-                value="ALL"
-            ),
-            html.H4("Single Address Geocoding", className="mt-4"),
-            dcc.Input(
-                id="geocode-input",
-                type="text",
-                placeholder="Enter address to geocode",
-                className="form-control"
-            ),
-            html.Button(
-                "Geocode",
-                id="geocode-button",
-                className="btn btn-primary mt-2"
-            ),
-            html.Div(id="geocode-result", className="mt-2")
-        ], width=4)
-    ]),
-
-    dbc.Row([
-        dbc.Col([
-            html.H4("Address Table"),
-            dash_table.DataTable(
-                id="address-table",
-                columns=[
-                    {"name": "ID", "id": "id"},
-                    {"name": "Original Address", "id": "original_address"},
-                    {"name": "Corrected Address", "id": "corrected_address"},
-                    {"name": "Latitude", "id": "latitude"},
-                    {"name": "Longitude", "id": "longitude"},
-                    {"name": "Confidence", "id": "confidence"},
-                    {"name": "Source", "id": "source"},
-                    {"name": "Status", "id": "status"}
-                ],
-                page_size=10,
-                style_table={"overflowX": "auto"},
-                style_cell={"textAlign": "left"},
-                style_header={"fontWeight": "bold"},
-                row_selectable="single"
-            )
-        ], width=12)
-    ]),
-
-    dbc.Modal([
-        dbc.ModalHeader("Edit Address"),
-        dbc.ModalBody([
-            dbc.Form([
-                dbc.Row([
-                    dbc.Col([
-                        dbc.Label("Original Address"),
-                        dbc.Input(id="modal-original", disabled=True)
-                    ], width=12)
-                ]),
-                dbc.Row([
-                    dbc.Col([
-                        dbc.Label("Corrected Address"),
-                        dbc.Input(id="modal-corrected")
-                    ], width=12)
-                ]),
-                dbc.Row([
-                    dbc.Col([
-                        dbc.Label("Latitude"),
-                        dbc.Input(id="modal-latitude", type="number")
-                    ], width=6),
-                    dbc.Col([
-                        dbc.Label("Longitude"),
-                        dbc.Input(id="modal-longitude", type="number")
-                    ], width=6)
-                ]),
-                dbc.Row([
-                    dbc.Col([
-                        dbc.Label("Reason for Correction"),
-                        dbc.Textarea(id="modal-reason", placeholder="Explain why this correction is needed")
-                    ], width=12)
-                ]),
-                dbc.Row([
-                    dbc.Col([
-                        dbc.Label("Your Name"),
-                        dbc.Input(id="modal-user", placeholder="Enter your name")
-                    ], width=12)
-                ])
-            ])
-        ]),
-        dbc.ModalFooter([
-            dbc.Button("Save", id="modal-save", className="ms-auto"),
-            dbc.Button("Cancel", id="modal-cancel", className="ms-2")
-        ])
-    ], id="edit-modal", is_open=False),
-
-    dbc.Row([
-        dbc.Col([
-            html.H4("Recent Corrections"),
-            dash_table.DataTable(
-                id="corrections-table",
-                columns=[
-                    {"name": "Date", "id": "changed_at"},
-                    {"name": "User", "id": "changed_by"},
-                    {"name": "Address", "id": "original_address"},
-                    {"name": "Field", "id": "field_changed"},
-                    {"name": "From", "id": "original_value"},
-                    {"name": "To", "id": "new_value"},
-                    {"name": "Reason", "id": "reason"}
-                ],
-                page_size=5,
-                style_table={"overflowX": "auto"},
-                style_cell={"textAlign": "left"},
-                style_header={"fontWeight": "bold"}
-            )
-        ], width=12)
-    ]),
-
-    dcc.Interval(
-        id="interval-component",
-        interval=30 * 1000,  # refresh every 30 seconds
-        n_intervals=0
-    ),
-
-    dcc.Store(id="selected-address-id")
-], fluid=True)
+app.layout = dbc.Container(
+    [
+        dbc.Row(
+            [
+                dbc.Col(
+                    [
+                        html.H1(
+                            "Address Geocoding Dashboard", className="text-center my-4"
+                        ),
+                        html.Hr(),
+                    ]
+                )
+            ]
+        ),
+        dbc.Row(
+            [
+                dbc.Col(
+                    [html.H4("Geocoding Statistics"), html.Div(id="stats-container")],
+                    width=12,
+                )
+            ]
+        ),
+        dbc.Row(
+            [
+                dbc.Col(
+                    [
+                        html.H4("Address Map"),
+                        dcc.Graph(id="address-map", style={"height": "600px"}),
+                    ],
+                    width=8,
+                ),
+                dbc.Col(
+                    [
+                        html.H4("Status Filter"),
+                        dcc.Dropdown(
+                            id="status-filter",
+                            options=[
+                                {"label": "All", "value": "ALL"},
+                                {"label": "Geocoded", "value": "GEOCODED"},
+                                {"label": "Failed", "value": "FAILED"},
+                                {
+                                    "label": "Manually Corrected",
+                                    "value": "MANUALLY_CORRECTED",
+                                },
+                            ],
+                            value="ALL",
+                        ),
+                        html.H4("Single Address Geocoding", className="mt-4"),
+                        dcc.Input(
+                            id="geocode-input",
+                            type="text",
+                            placeholder="Enter address to geocode",
+                            className="form-control",
+                        ),
+                        html.Button(
+                            "Geocode",
+                            id="geocode-button",
+                            className="btn btn-primary mt-2",
+                        ),
+                        html.Div(id="geocode-result", className="mt-2"),
+                    ],
+                    width=4,
+                ),
+            ]
+        ),
+        dbc.Row(
+            [
+                dbc.Col(
+                    [
+                        html.H4("Address Table"),
+                        dash_table.DataTable(
+                            id="address-table",
+                            columns=[
+                                {"name": "ID", "id": "id"},
+                                {"name": "Original Address", "id": "original_address"},
+                                {
+                                    "name": "Corrected Address",
+                                    "id": "corrected_address",
+                                },
+                                {"name": "Latitude", "id": "latitude"},
+                                {"name": "Longitude", "id": "longitude"},
+                                {"name": "Confidence", "id": "confidence"},
+                                {"name": "Source", "id": "source"},
+                                {"name": "Status", "id": "status"},
+                            ],
+                            page_size=10,
+                            style_table={"overflowX": "auto"},
+                            style_cell={"textAlign": "left"},
+                            style_header={"fontWeight": "bold"},
+                            row_selectable="single",
+                        ),
+                    ],
+                    width=12,
+                )
+            ]
+        ),
+        dbc.Modal(
+            [
+                dbc.ModalHeader("Edit Address"),
+                dbc.ModalBody(
+                    [
+                        dbc.Form(
+                            [
+                                dbc.Row(
+                                    [
+                                        dbc.Col(
+                                            [
+                                                dbc.Label("Original Address"),
+                                                dbc.Input(
+                                                    id="modal-original", disabled=True
+                                                ),
+                                            ],
+                                            width=12,
+                                        )
+                                    ]
+                                ),
+                                dbc.Row(
+                                    [
+                                        dbc.Col(
+                                            [
+                                                dbc.Label("Corrected Address"),
+                                                dbc.Input(id="modal-corrected"),
+                                            ],
+                                            width=12,
+                                        )
+                                    ]
+                                ),
+                                dbc.Row(
+                                    [
+                                        dbc.Col(
+                                            [
+                                                dbc.Label("Latitude"),
+                                                dbc.Input(
+                                                    id="modal-latitude", type="number"
+                                                ),
+                                            ],
+                                            width=6,
+                                        ),
+                                        dbc.Col(
+                                            [
+                                                dbc.Label("Longitude"),
+                                                dbc.Input(
+                                                    id="modal-longitude", type="number"
+                                                ),
+                                            ],
+                                            width=6,
+                                        ),
+                                    ]
+                                ),
+                                dbc.Row(
+                                    [
+                                        dbc.Col(
+                                            [
+                                                dbc.Label("Reason for Correction"),
+                                                dbc.Textarea(
+                                                    id="modal-reason",
+                                                    placeholder="Explain why this correction is needed",
+                                                ),
+                                            ],
+                                            width=12,
+                                        )
+                                    ]
+                                ),
+                                dbc.Row(
+                                    [
+                                        dbc.Col(
+                                            [
+                                                dbc.Label("Your Name"),
+                                                dbc.Input(
+                                                    id="modal-user",
+                                                    placeholder="Enter your name",
+                                                ),
+                                            ],
+                                            width=12,
+                                        )
+                                    ]
+                                ),
+                            ]
+                        )
+                    ]
+                ),
+                dbc.ModalFooter(
+                    [
+                        dbc.Button("Save", id="modal-save", className="ms-auto"),
+                        dbc.Button("Cancel", id="modal-cancel", className="ms-2"),
+                    ]
+                ),
+            ],
+            id="edit-modal",
+            is_open=False,
+        ),
+        dbc.Row(
+            [
+                dbc.Col(
+                    [
+                        html.H4("Recent Corrections"),
+                        dash_table.DataTable(
+                            id="corrections-table",
+                            columns=[
+                                {"name": "Date", "id": "changed_at"},
+                                {"name": "User", "id": "changed_by"},
+                                {"name": "Address", "id": "original_address"},
+                                {"name": "Field", "id": "field_changed"},
+                                {"name": "From", "id": "original_value"},
+                                {"name": "To", "id": "new_value"},
+                                {"name": "Reason", "id": "reason"},
+                            ],
+                            page_size=5,
+                            style_table={"overflowX": "auto"},
+                            style_cell={"textAlign": "left"},
+                            style_header={"fontWeight": "bold"},
+                        ),
+                    ],
+                    width=12,
+                )
+            ]
+        ),
+        dcc.Interval(
+            id="interval-component",
+            interval=30 * 1000,  # refresh every 30 seconds
+            n_intervals=0,
+        ),
+        dcc.Store(id="selected-address-id"),
+    ],
+    fluid=True,
+)
 
 
 # --------------------------------------------------------------------------
 # Callbacks
 # --------------------------------------------------------------------------
 
+
 @app.callback(
-    Output("stats-container", "children"),
-    Input("interval-component", "n_intervals")
+    Output("stats-container", "children"), Input("interval-component", "n_intervals")
 )
-def update_stats(n):
+def update_stats(n: int) -> Any:
     stats = get_geocoding_stats()
 
-    def card(title, value, extra_class=""):
-        return dbc.Col([
-            dbc.Card([
-                dbc.CardBody([
-                    html.H5(title, className="card-title"),
-                    html.H3(value, className=f"card-text {extra_class}".strip())
-                ])
-            ])
-        ])
+    def card(title: str, value: int | str, extra_class: str = "") -> Any:
+        return dbc.Col(
+            [
+                dbc.Card(
+                    [
+                        dbc.CardBody(
+                            [
+                                html.H5(title, className="card-title"),
+                                html.H3(
+                                    value, className=f"card-text {extra_class}".strip()
+                                ),
+                            ]
+                        )
+                    ]
+                )
+            ]
+        )
 
-    return dbc.Row([
-        card("Total Addresses", int(stats["total"] or 0)),
-        card("Geocoded", _count_with_pct(stats["geocoded"], stats["total"]), "text-success"),
-        card("Failed", _count_with_pct(stats["failed"], stats["total"]), "text-danger"),
-        card("Manually Fixed", _count_with_pct(stats["manually_corrected"], stats["total"]), "text-primary"),
-        card("Avg Confidence", _avg_confidence_label(stats["avg_confidence"])),
-    ])
+    return dbc.Row(
+        [
+            card("Total Addresses", int(stats["total"] or 0)),
+            card(
+                "Geocoded",
+                _count_with_pct(stats["geocoded"], stats["total"]),
+                "text-success",
+            ),
+            card(
+                "Failed",
+                _count_with_pct(stats["failed"], stats["total"]),
+                "text-danger",
+            ),
+            card(
+                "Manually Fixed",
+                _count_with_pct(stats["manually_corrected"], stats["total"]),
+                "text-primary",
+            ),
+            card("Avg Confidence", _avg_confidence_label(stats["avg_confidence"])),
+        ]
+    )
 
 
 @app.callback(
-    [Output("address-table", "data"),
-     Output("address-map", "figure")],
-    [Input("status-filter", "value"),
-     Input("interval-component", "n_intervals")]
+    [Output("address-table", "data"), Output("address-map", "figure")],
+    [Input("status-filter", "value"), Input("interval-component", "n_intervals")],
 )
-def update_addresses(status, n):
+def update_addresses(
+    status: str | None, n: int
+) -> tuple[list[dict[Any, Any]], go.Figure]:
     status_filter = None if status == "ALL" else status
     df = get_geocoded_addresses(status=status_filter)
 
@@ -424,40 +491,64 @@ def update_addresses(status, n):
 
 
 @app.callback(
-    Output("corrections-table", "data"),
-    Input("interval-component", "n_intervals")
+    Output("corrections-table", "data"), Input("interval-component", "n_intervals")
 )
-def update_corrections(n):
+def update_corrections(n: int) -> list[dict[Any, Any]]:
     # Previous version wrapped this in conn.execute(...), which is not an
     # executable object and crashed on every interval tick.
     return get_correction_logs().to_dict("records")
 
 
 @app.callback(
-    [Output("edit-modal", "is_open"),
-     Output("modal-original", "value"),
-     Output("modal-corrected", "value"),
-     Output("modal-latitude", "value"),
-     Output("modal-longitude", "value"),
-     Output("selected-address-id", "data")],
-    [Input("address-table", "selected_rows"),
-     Input("modal-save", "n_clicks"),
-     Input("modal-cancel", "n_clicks")],
-    [State("address-table", "data"),
-     State("edit-modal", "is_open"),
-     State("selected-address-id", "data")]
+    [
+        Output("edit-modal", "is_open"),
+        Output("modal-original", "value"),
+        Output("modal-corrected", "value"),
+        Output("modal-latitude", "value"),
+        Output("modal-longitude", "value"),
+        Output("selected-address-id", "data"),
+    ],
+    [
+        Input("address-table", "selected_rows"),
+        Input("modal-save", "n_clicks"),
+        Input("modal-cancel", "n_clicks"),
+    ],
+    [
+        State("address-table", "data"),
+        State("edit-modal", "is_open"),
+        State("selected-address-id", "data"),
+    ],
 )
-def toggle_modal(selected_rows, save_clicks, cancel_clicks, data, is_open, address_id):
+def toggle_modal(
+    selected_rows: list[int] | None,
+    save_clicks: int | None,
+    cancel_clicks: int | None,
+    data: list[dict[str, Any]] | None,
+    is_open: bool,
+    address_id: int | None,
+) -> tuple[bool, str, str, float | None, float | None, int | None]:
     ctx = dash.callback_context
 
     if not ctx.triggered:
         return is_open, "", "", None, None, address_id
 
-    button_id = ctx.triggered[0]["prop_id"].split(".")[0]
+    # dash's own `triggered` property is untyped internally (falls back to
+    # `getattr(..., default)`), even though the package ships py.typed; wrap
+    # in str() so the boundary is an explicit, checked conversion rather
+    # than an inferred Any/Unknown propagating further into this function.
+    prop_id = str(ctx.triggered[0]["prop_id"])
+    button_id = prop_id.split(".")[0]
 
-    if button_id == "address-table" and selected_rows:
+    if button_id == "address-table" and selected_rows and data:
         row = data[selected_rows[0]]
-        return True, row["original_address"], row["corrected_address"], row["latitude"], row["longitude"], row["id"]
+        return (
+            True,
+            row["original_address"],
+            row["corrected_address"],
+            row["latitude"],
+            row["longitude"],
+            row["id"],
+        )
 
     if button_id in ["modal-save", "modal-cancel"]:
         return False, "", "", None, None, address_id
@@ -468,9 +559,9 @@ def toggle_modal(selected_rows, save_clicks, cancel_clicks, data, is_open, addre
 @app.callback(
     Output("geocode-result", "children"),
     Input("geocode-button", "n_clicks"),
-    State("geocode-input", "value")
+    State("geocode-input", "value"),
 )
-def geocode_address(n_clicks, address):
+def geocode_address(n_clicks: int | None, address: str | None) -> Any:
     if not n_clicks or not address:
         return ""
 
@@ -487,35 +578,58 @@ def geocode_address(n_clicks, address):
             except Exception:
                 pass  # display the result even if persisting it fails
 
-        return html.Div([
-            html.P(f"Geocoded to: {result.get('match', address)}", className="text-success"),
-            html.P(f"Coordinates: ({result.get('latitude')}, {result.get('longitude')})"),
-            html.P(f"Confidence: {result.get('confidence', 0) * 100:.1f}%"),
-            html.P(f"Source: {result.get('source', 'Unknown')}")
-        ])
-    return html.P(f"Geocoding failed: {result.get('error', 'Unknown error')}", className="text-danger")
+        return html.Div(
+            [
+                html.P(
+                    f"Geocoded to: {result.get('match', address)}",
+                    className="text-success",
+                ),
+                html.P(
+                    f"Coordinates: ({result.get('latitude')}, {result.get('longitude')})"
+                ),
+                html.P(f"Confidence: {result.get('confidence', 0) * 100:.1f}%"),
+                html.P(f"Source: {result.get('source', 'Unknown')}"),
+            ]
+        )
+    return html.P(
+        f"Geocoding failed: {result.get('error', 'Unknown error')}",
+        className="text-danger",
+    )
 
 
 @app.callback(
     Output("interval-component", "n_intervals"),
     Input("modal-save", "n_clicks"),
-    [State("selected-address-id", "data"),
-     State("modal-corrected", "value"),
-     State("modal-latitude", "value"),
-     State("modal-longitude", "value"),
-     State("modal-user", "value"),
-     State("modal-reason", "value"),
-     State("interval-component", "n_intervals")]
+    [
+        State("selected-address-id", "data"),
+        State("modal-corrected", "value"),
+        State("modal-latitude", "value"),
+        State("modal-longitude", "value"),
+        State("modal-user", "value"),
+        State("modal-reason", "value"),
+        State("interval-component", "n_intervals"),
+    ],
 )
-def save_correction(n_clicks, address_id, corrected, latitude, longitude, user, reason, n_intervals):
+def save_correction(
+    n_clicks: int | None,
+    address_id: int | None,
+    corrected: str | None,
+    latitude: float | None,
+    longitude: float | None,
+    user: str | None,
+    reason: str | None,
+    n_intervals: int,
+) -> int:
     if not n_clicks or not address_id:
         return n_intervals
-    
-    print(f"Saving correction for address_id={address_id}: '{corrected}' ({latitude}, {longitude})")
+
+    print(
+        f"Saving correction for address_id={address_id}: '{corrected}' ({latitude}, {longitude})"
+    )
 
     save_manual_correction(
         address_id=address_id,
-        corrected_address=corrected,
+        corrected_address=corrected or "",
         latitude=latitude,
         longitude=longitude,
         user=user or "Anonymous",
