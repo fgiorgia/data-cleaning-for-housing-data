@@ -1,9 +1,20 @@
-.venv
-.env
+# Secrets
 .pgpass
-**/__pycache__
-out/dataset.csv
+
+# Pipeline artifacts (out/ covers dataset.csv and restore_toc.list)
+out/
 data/dataset_no_bom.csv
+data/migration_dump.backup
+data/Nashville_housing_data_2013_2016.csv
+# Skills in this repo are private
+.agents
+.claude
+.github/copilot-instructions.md
+*.log
+Modelfile
+.hermesrules
+
+# Generated files
 nashville_property_map.html
 
 # Agent only dirs
