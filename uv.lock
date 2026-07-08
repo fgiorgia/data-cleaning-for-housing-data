@@ -5,7 +5,7 @@ requires-python = ">=3.14, <4.0"
 [[package]]
 name = "agentic-tools"
 version = "0.1.0"
-source = { git = "https://github.com/swiftpostlabs/agentic-tools.git#511f2c56bf40ae38abd94f59b47fcc968d291009" }
+source = { git = "https://github.com/swiftpostlabs/agentic-tools.git#65ca0d7d32dd350890c0dd8f14b8a6ab1798b417" }
 dependencies = [
     { name = "json5" },
     { name = "pydantic" },

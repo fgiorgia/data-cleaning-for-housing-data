@@ -157,14 +157,15 @@ uv run poe restore-backup-fresh    # drops and rebuilds it
 Each task sets `DB_DATABASE` to `geocoded_housing` (the database
 `restore-backup` provisions).
 
-| Task                                 | What it does                                                                                |
-| ------------------------------------ | ------------------------------------------------------------------------------------------- |
-| `uv run poe address-standardization` | (Re)applies `src/address_standardization.sql` — idempotent                                  |
-| `uv run poe address-imputation`      | Backfills `*_imputed` provenance flags and parcel-sibling address fills — idempotent        |
-| `uv run poe geocoder --stats-only`   | Geocoding CLI (OSM first, HERE fallback); `--stats-only` reports without spending API calls |
-| `uv run poe show-map`                | Renders `nashville_property_map.html` from geocoded addresses                               |
-| `uv run poe data-quality-check`      | Streamlit data-quality dashboard over `housing_data`                                        |
-| `uv run poe geocoding-dashboard`     | Dash dashboard for reviewing/correcting geocodes                                            |
+| Task                                   | What it does                                                                                          |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `uv run poe address-standardization`   | (Re)applies `src/address_standardization.sql` — idempotent                                            |
+| `uv run poe address-imputation`        | Backfills `*_imputed` provenance flags and parcel-sibling address fills — idempotent                  |
+| `uv run poe data-quality-maintenance`  | Removes duplicate sale records and flags placeholder addresses in `data_quality_issues` — idempotent  |
+| `uv run poe geocoder --stats-only`     | Geocoding CLI (OSM first, HERE fallback); `--stats-only` reports without spending API calls           |
+| `uv run poe show-map`                  | Renders `nashville_property_map.html` from geocoded addresses                                         |
+| `uv run poe data-quality-check`        | Streamlit data-quality dashboard over `housing_data`                                                  |
+| `uv run poe geocoding-dashboard`       | Dash dashboard for reviewing/correcting geocodes                                                      |
 
 The HERE fallback needs `HERE_API_KEY` in `.env`; without it the geocoder
 runs OSM-only. OSM calls respect Nominatim's usage policy (max 1 request per

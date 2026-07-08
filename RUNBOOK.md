@@ -266,6 +266,7 @@ work with this endpoint.
 | --- | --- | --- |
 | `uv run poe address-standardization` | — | (Re)applies `src/address_standardization.sql` and refreshes `address_standardized`. Idempotent (`CREATE OR REPLACE` / `ADD COLUMN IF NOT EXISTS`), safe to re-run. |
 | `uv run poe address-imputation` | — | Adds `property_address_imputed` / `owner_address_imputed` flags to `housing_data`, reconstructing which addresses the original migration filled in (by comparing against `data/dataset.csv`), and re-applies the parcel-sibling fills. Idempotent, safe to re-run. |
+| `uv run poe data-quality-maintenance` | — | Removes duplicate sale records (same parcel, address, price, date, legal reference — the migration never deduplicated) together with their `address_mappings`, and flags addresses with placeholder house number 0 in `data_quality_issues`. Idempotent, safe to re-run. |
 | `uv run poe geocoder --stats-only` | — | Geocoding CLI. `--stats-only` reports API usage + DB completeness **without spending any API calls**. Drop the flag to actually geocode. |
 | `uv run poe show-map` | opens `nashville_property_map.html` | Renders a clustered Folium map of geocoded properties. The HTML is a generated artifact (gitignored); regenerate any time. |
 | `uv run poe data-quality-check` | <http://localhost:8501> | Streamlit dashboard over `housing_data` (data-quality issues). |
