@@ -34,7 +34,7 @@ data/dataset.csv ──▶ remove_bom ──▶ load_csv ──▶ cleaning.sql 
                                                       ▼
                                               out/dataset.csv (deliverable)
 
-data/migration_dump.backup ──▶ restore-backup ──▶ 'housing' DB (PostGIS)
+data/migration_dump.backup ──▶ restore-backup ──▶ 'geocoded_housing' DB (PostGIS)
                                                       │
                          ┌────────────────────────────┼──────────────────────┐
                          ▼                            ▼                      ▼
@@ -144,21 +144,23 @@ re-derived. Its authoritative, readable schema is committed at
 
 The backup is stored with **Git LFS** (`git lfs pull` after cloning if your
 clone is missing it). The restore targets a dedicated database (default
-`housing`) so it never collides with the cleaning pipeline:
+`geocoded_housing`) so it never collides with the cleaning pipeline, and
+creates it if missing — no manual `CREATE DATABASE` needed:
 
 ```sh
 uv run poe restore-backup          # creates the database if missing
 uv run poe restore-backup-fresh    # drops and rebuilds it
 ```
 
-## Feature tools (restored `housing` database)
+## Feature tools (restored `geocoded_housing` database)
 
-Each task defaults `DB_DATABASE` to `housing`; set it in your shell to
-override.
+Each task sets `DB_DATABASE` to `geocoded_housing` (the database
+`restore-backup` provisions).
 
 | Task                                 | What it does                                                                                |
 | ------------------------------------ | ------------------------------------------------------------------------------------------- |
 | `uv run poe address-standardization` | (Re)applies `src/address_standardization.sql` — idempotent                                  |
+| `uv run poe address-imputation`      | Backfills `*_imputed` provenance flags and parcel-sibling address fills — idempotent        |
 | `uv run poe geocoder --stats-only`   | Geocoding CLI (OSM first, HERE fallback); `--stats-only` reports without spending API calls |
 | `uv run poe show-map`                | Renders `nashville_property_map.html` from geocoded addresses                               |
 | `uv run poe data-quality-check`      | Streamlit data-quality dashboard over `housing_data`                                        |

@@ -69,33 +69,43 @@ reportUnnecessaryTypeIgnoreComment = "warning"
 [project.scripts]
 main = "my_project.main:main"
 
+[tool.poe.env]
+DB_DATABASE = "postgres"
+
 [tool.poe.tasks]
+# Feature tools: operate on the geocoded_housing database provisioned by
+# restore-backup, which creates it if missing.
+address-standardization = { cmd = "python ./scripts/psql_with_config.py -f ./src/address_standardization.sql", env = { DB_DATABASE = "geocoded_housing" } }
+address-imputation = { cmd = "python ./scripts/psql_with_config.py -f ./src/address_imputation.sql", env = { DB_DATABASE = "geocoded_housing" } }
+geocoder = { cmd = "python ./src/geocoding_integration.py", env = { DB_DATABASE = "geocoded_housing" } }
+geocoding-dashboard = { cmd = "python ./src/geocoding_dashboard.py", env = { DB_DATABASE = "geocoded_housing" } }
+data-quality-check = { cmd = "streamlit run ./scripts/data_quality_dashboard.py", env = { DB_DATABASE = "geocoded_housing" } }
+show-map = { cmd = "python ./scripts/property_map.py", env = { DB_DATABASE = "geocoded_housing" } }
+
+# Cleaning tools: Require an override. MUST be written as inline tables { cmd = "...", env = {...} }.
+ensure-clean-db = { cmd = "python ./scripts/ensure_database.py", env = { DB_DATABASE = "housing_clean" } }
+load-csv = { cmd = "python ./scripts/load_csv.py --datasetFile='./data/dataset_no_bom.csv' --table='HousingDataRaw'", env = { DB_DATABASE = "housing_clean" } }
+sql-install-fuzzystrmatch = { cmd = "python ./scripts/psql_with_config.py -c \"CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;\"", env = { DB_DATABASE = "housing_clean" } }
+sql-cleanup = { cmd = "python ./scripts/psql_with_config.py -f ./src/cleaning.sql", env = { DB_DATABASE = "housing_clean" } }
+sql-cleanup-keep = { cmd = "python ./scripts/psql_with_config.py -v KEEP_TABLES=1 -f ./src/cleaning.sql", env = { DB_DATABASE = "housing_clean" } }
 remove-bom = "python ./scripts/remove_bom.py --input='./data/dataset.csv' --output='./data/dataset_no_bom.csv'"
-load-csv = "python ./scripts/load_csv.py --datasetFile='./data/dataset_no_bom.csv' --table='HousingDataRaw'"
 ensure-out-dir = "python -c \"import os; os.makedirs('out', exist_ok=True)\""
-sql-install-fuzzystrmatch = "python ./scripts/psql_with_config.py -c \"CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;\""
-sql-cleanup = "python ./scripts/psql_with_config.py -f ./src/cleaning.sql"
 data-cleaning-pipeline = [
   "ensure-out-dir",
+  "ensure-clean-db",
   "remove-bom",
   "load-csv",
   "sql-install-fuzzystrmatch",
   "sql-cleanup",
 ]
-sql-cleanup-keep = "python ./scripts/psql_with_config.py -v KEEP_TABLES=1 -f ./src/cleaning.sql"
 data-cleaning-pipeline-keep = [
   "ensure-out-dir",
+  "ensure-clean-db",
   "remove-bom",
   "load-csv",
   "sql-install-fuzzystrmatch",
   "sql-cleanup-keep",
 ]
-
-address-standardization = { cmd = "python ./scripts/psql_with_config.py -f ./src/address_standardization.sql", env = { DB_DATABASE.default = "housing" } }
-geocoder = { cmd = "python ./src/geocoding_integration.py", env = { DB_DATABASE.default = "housing" } }
-geocoding-dashboard = { cmd = "python ./src/geocoding_dashboard.py", env = { DB_DATABASE.default = "housing" } }
-data-quality-check = { cmd = "streamlit run ./scripts/data_quality_dashboard.py", env = { DB_DATABASE.default = "housing" } }
-show-map = { cmd = "python ./scripts/property_map.py", env = { DB_DATABASE.default = "housing" } }
 
 # Provision the full enriched database (PostGIS, geocoding, address functions)
 # by restoring data/migration_dump.backup into a dedicated database. See README.
