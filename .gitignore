@@ -20,6 +20,7 @@ nashville_property_map.html
 # Agent only dirs
 /.agents/playground/
 /.agents/tasks/
+/.playwright-cli/
 
 
 # Byte-compiled / optimized / DLL files
