@@ -78,11 +78,15 @@ def show_stats(service: GeocodingService) -> None:
     api_stats = service.get_api_usage_stats()
 
     print("\n===== API Usage Statistics =====")
-    print("TODAY'S USAGE:")
-    print(f"  HERE API: {api_stats['today_usage'].get('HERE', 0)} / 1000 requests")
-    print(f"  OSM API: {api_stats['today_usage'].get('OSM', 0)} requests")
+    print("CURRENT USAGE:")
+    print(f"  HERE API (24h window): {api_stats['here_window_used']} / 1000 requests")
+    print(f"  OSM API (today): {api_stats['today_usage'].get('OSM', 0)} requests")
     print(f"  HERE API remaining: {api_stats['here_daily_remaining']} requests")
-    print(f"  HERE API counter resets at: {api_stats['here_resets_at']} (local time)")
+    resets_at = api_stats["here_resets_at"]
+    if resets_at:
+        print(f"  HERE API counter resets at: {resets_at} (local time)")
+    else:
+        print("  HERE API window: none active - the next HERE call opens one")
 
     print("\n===== Database Statistics =====")
     try:
@@ -149,9 +153,7 @@ def geocode_addresses(args: argparse.Namespace) -> None:
 
     # Show current API usage
     api_stats = service.get_api_usage_stats()
-    print(
-        f"\nHERE API today: {api_stats['today_usage'].get('HERE', 0)} / 1000 requests"
-    )
+    print(f"\nHERE API (24h window): {api_stats['here_window_used']} / 1000 requests")
     print(f"HERE API remaining: {api_stats['here_daily_remaining']} requests")
 
     # Check if we're running low on HERE API requests
@@ -302,7 +304,7 @@ def geocode_addresses(args: argparse.Namespace) -> None:
 
         # Show updated API stats
         api_stats = service.get_api_usage_stats()
-        here_used = api_stats["today_usage"].get("HERE", 0)
+        here_used = api_stats["here_window_used"]
         print(
             f"HERE API usage: {here_used}/1000 ({api_stats['here_daily_remaining']} remaining)"
         )

@@ -4,7 +4,6 @@ import os
 import re
 import time
 from datetime import date, datetime, timedelta
-from datetime import time as dtime
 from typing import Any
 
 import requests
@@ -32,6 +31,10 @@ USER_AGENT: str = (
     "(https://github.com/fgiorgia/data-cleaning-for-housing-data)"
 )
 NOMINATIM_MIN_INTERVAL_S: float = 1.1
+
+# HERE's free quota is a rolling window: the first HERE call opens a 24h
+# window and the counter starts fresh 24h after that call - not at midnight.
+HERE_WINDOW: timedelta = timedelta(hours=24)
 
 # Configure logging
 logging.basicConfig(
@@ -167,6 +170,9 @@ class GeocodingService:
                     Column("request_date", Date, nullable=False),
                     Column("request_count", Integer, default=0),
                     Column("last_updated", DateTime),
+                    # Start of the rolling 24h quota window (HERE rows only;
+                    # NULL for OSM, whose counter is informational per-day).
+                    Column("window_started_at", DateTime),
                     # Required by every INSERT ... ON CONFLICT (api_name, request_date)
                     UniqueConstraint(
                         "api_name",
@@ -177,6 +183,15 @@ class GeocodingService:
                 api_usage.create(conn)
                 logger.info("Created api_usage table")
                 # Seeding today's rows happens in _init_api_usage_counter().
+            else:
+                # Databases created before the rolling-window change lack the
+                # window anchor column.
+                conn.execute(
+                    text(
+                        "ALTER TABLE api_usage "
+                        "ADD COLUMN IF NOT EXISTS window_started_at TIMESTAMP"
+                    )
+                )
 
             # Create address correction log if it doesn't exist
             if "address_correction_log" not in existing_tables:
@@ -208,70 +223,137 @@ class GeocodingService:
                 logger.warning(f"Could not set up PostGIS extension: {e}")
 
     def _init_api_usage_counter(self) -> None:
-        """Load (or create) today's persistent API usage counters."""
+        """Load the persistent API usage counters.
+
+        OSM keeps an informational per-day row. HERE uses a rolling 24h
+        window: one api_usage row per window, anchored at the first HERE
+        call via window_started_at. No HERE row is seeded here - the next
+        HERE call opens (and anchors) the window.
+        """
         today: date = date.today()
         # engine.begin() commits; the old engine.connect() rolled the INSERT
         # back on exit, so today's row never existed and no usage persisted.
         with self.engine.begin() as conn:
-            for api_name in ("HERE", "OSM"):
+            conn.execute(
+                text("""
+                INSERT INTO api_usage (api_name, request_date, request_count, last_updated)
+                VALUES ('OSM', :today, 0, NOW())
+                ON CONFLICT (api_name, request_date) DO NOTHING
+            """),
+                {"today": today},
+            )
+            # Rows written before the rolling-window change have no anchor;
+            # treat them as windows opened at their date's local midnight,
+            # which matches the old resets-at-midnight semantics.
+            conn.execute(text("""
+                UPDATE api_usage SET window_started_at = request_date::timestamp
+                WHERE api_name = 'HERE' AND window_started_at IS NULL
+            """))
+            row = conn.execute(text("""
+                SELECT request_count, window_started_at FROM api_usage
+                WHERE api_name = 'HERE'
+                ORDER BY window_started_at DESC
+                LIMIT 1
+            """)).fetchone()
+        self._usage_date: date = today
+        self.here_daily_requests: int = 0
+        self._here_window_started_at: datetime | None = None
+        if row is not None and datetime.now() < row[1] + HERE_WINDOW:
+            self.here_daily_requests = int(row[0])
+            self._here_window_started_at = row[1]
+            logger.info(
+                f"HERE API usage for the 24h window opened "
+                f"{row[1]:%Y-%m-%d %H:%M}: {self.here_daily_requests} requests"
+            )
+        else:
+            logger.info("HERE API: no active 24h window - the next HERE call opens one")
+
+    def _increment_api_usage(self, api_name: str) -> None:
+        """Increment the persistent counter; the DB value is authoritative."""
+        now: datetime = datetime.now()
+        with self.engine.begin() as conn:
+            if api_name == "HERE":
+                if (
+                    self._here_window_started_at is None
+                    or now >= self._here_window_started_at + HERE_WINDOW
+                ):
+                    # First call of a new window: this timestamp anchors the
+                    # 24h quota. ON CONFLICT covers the (rare) case where a
+                    # row for today already exists - keep its anchor.
+                    row = conn.execute(
+                        text("""
+                        INSERT INTO api_usage (api_name, request_date, request_count, last_updated, window_started_at)
+                        VALUES ('HERE', :today, 1, NOW(), :now)
+                        ON CONFLICT (api_name, request_date)
+                        DO UPDATE SET request_count = api_usage.request_count + 1,
+                                    last_updated = NOW()
+                        RETURNING request_count, window_started_at
+                    """),
+                        {"today": now.date(), "now": now},
+                    ).fetchone()
+                else:
+                    row = conn.execute(
+                        text("""
+                        UPDATE api_usage
+                        SET request_count = request_count + 1, last_updated = NOW()
+                        WHERE api_name = 'HERE' AND window_started_at = :window_start
+                        RETURNING request_count, window_started_at
+                    """),
+                        {"window_start": self._here_window_started_at},
+                    ).fetchone()
+                if row is not None:
+                    self.here_daily_requests = int(row[0])
+                    self._here_window_started_at = row[1]
+                logger.info(
+                    f"Incremented HERE API usage counter. "
+                    f"New count: {self.here_daily_requests}"
+                )
+            else:
                 conn.execute(
                     text("""
                     INSERT INTO api_usage (api_name, request_date, request_count, last_updated)
-                    VALUES (:api, :today, 0, NOW())
-                    ON CONFLICT (api_name, request_date) DO NOTHING
+                    VALUES (:api, :today, 1, NOW())
+                    ON CONFLICT (api_name, request_date)
+                    DO UPDATE SET request_count = api_usage.request_count + 1,
+                                last_updated = NOW()
                 """),
-                    {"api": api_name, "today": today},
+                    {"api": api_name, "today": now.date()},
                 )
-            row = conn.execute(
-                text("""
-                SELECT request_count FROM api_usage
-                WHERE api_name = 'HERE' AND request_date = :today
-            """),
-                {"today": today},
-            ).fetchone()
-            self.here_daily_requests: int = int(row[0]) if row else 0
-        self._usage_date: date = today
-        logger.info(
-            f"HERE API usage for today ({today}): {self.here_daily_requests} requests"
-        )
+                logger.info(f"Incremented {api_name} API usage counter.")
 
-    def _increment_api_usage(self, api_name: str) -> None:
-        """Increment today's counter; the DB value is authoritative."""
-        today: date = date.today()
-        with self.engine.begin() as conn:
-            row = conn.execute(
-                text("""
-                INSERT INTO api_usage (api_name, request_date, request_count, last_updated)
-                VALUES (:api, :today, 1, NOW())
-                ON CONFLICT (api_name, request_date)
-                DO UPDATE SET request_count = api_usage.request_count + 1,
-                            last_updated = NOW()
-                RETURNING request_count
-            """),
-                {"api": api_name, "today": today},
-            ).fetchone()
-        if api_name == "HERE" and row is not None:
-            self.here_daily_requests = int(row[0])
-        logger.info(
-            f"Incremented {api_name} API usage counter. "
-            f"New count: {self.here_daily_requests if api_name == 'HERE' else 'N/A'}"
-        )
+    def _here_reset_at(self) -> datetime | None:
+        """End of the active 24h window - 24h after its first HERE call.
 
-    def _here_reset_at(self) -> datetime:
-        """Next local midnight - when the per-day HERE counter starts fresh."""
-        return datetime.combine(date.today() + timedelta(days=1), dtime.min)
+        None when no window is active: HERE is available immediately and the
+        next call opens a fresh window.
+        """
+        if self._here_window_started_at is None:
+            return None
+        return self._here_window_started_at + HERE_WINDOW
 
     def _check_here_usage_limit(self) -> bool:
-        """Check if we've reached the HERE API daily limit."""
+        """Check if we've reached the HERE API quota for the current window."""
         if date.today() != self._usage_date:
-            # The date rolled over while this process was running: re-read
-            # the fresh counter instead of staying blocked on yesterday's.
+            # The date rolled over while this process was running: reseed
+            # the OSM day row and re-sync the HERE window from the DB.
             self._init_api_usage_counter()
+        if (
+            self._here_window_started_at is not None
+            and datetime.now() >= self._here_window_started_at + HERE_WINDOW
+        ):
+            # The 24h window expired mid-run: the quota is fresh and the
+            # next HERE call opens a new window.
+            self._here_window_started_at = None
+            self.here_daily_requests = 0
         if self.here_daily_requests >= 950:  # Use 950 as a safety margin
+            reset_at = self._here_reset_at()
+            reset_note = (
+                f"{reset_at:%Y-%m-%d %H:%M} (local time)" if reset_at else "now"
+            )
             logger.warning(
-                f"HERE API daily limit approaching: "
-                f"{self.here_daily_requests}/1000 requests. "
-                f"HERE re-enables at {self._here_reset_at():%Y-%m-%d %H:%M} (local time)."
+                f"HERE API quota approaching: "
+                f"{self.here_daily_requests}/1000 requests in the current "
+                f"24h window. HERE re-enables at {reset_note}."
             )
             return False
         return True
@@ -480,13 +562,16 @@ class GeocodingService:
         if not re.search(r"\bTN\b|\bTennessee\b", full_address, re.IGNORECASE):
             full_address = f"{full_address}, TN, USA"
 
-        # Check usage limits
+        # Check usage limits. A failed check implies an active window (the
+        # count can only be at the cap inside one), so reset_at is never None
+        # here; the fallback keeps the payload well-formed regardless.
         if not self._check_here_usage_limit():
-            logger.error("HERE API daily limit reached")
+            logger.error("HERE API quota reached for the current 24h window")
+            reset_at = self._here_reset_at()
             return {
                 "status": "FAILED",
-                "error": "Daily API limit reached",
-                "retry_after": self._here_reset_at().isoformat(),
+                "error": "API quota reached for the current 24h window",
+                "retry_after": (reset_at or datetime.now()).isoformat(),
                 "source": "HERE",
             }
 
@@ -907,7 +992,8 @@ class GeocodingService:
             # Check HERE usage limit
             if not self._check_here_usage_limit():
                 logger.warning(
-                    "HERE API daily limit reached, stopping batch processing"
+                    "HERE API quota reached for the current 24h window, "
+                    "stopping batch processing"
                 )
                 break
 
@@ -1006,15 +1092,34 @@ class GeocodingService:
                     {"date": request_date, "count": count}
                 )
 
-            return {
-                "today_usage": today_usage,
-                "historical_usage": historical_usage,
-                "here_daily_limit": 1000,
-                "here_daily_remaining": 1000 - today_usage.get("HERE", 0),
-                "here_resets_at": self._here_reset_at().isoformat(
+            # HERE quota numbers come from the rolling 24h window, which can
+            # span two calendar dates - today's row alone would undercount.
+            window_row = conn.execute(text("""
+                SELECT request_count, window_started_at FROM api_usage
+                WHERE api_name = 'HERE' AND window_started_at IS NOT NULL
+                ORDER BY window_started_at DESC
+                LIMIT 1
+            """)).fetchone()
+
+        window_used = 0
+        window_resets_at: str | None = None
+        if window_row is not None:
+            window_start: datetime = window_row[1]
+            if datetime.now() < window_start + HERE_WINDOW:
+                window_used = int(window_row[0])
+                window_resets_at = (window_start + HERE_WINDOW).isoformat(
                     sep=" ", timespec="minutes"
-                ),
-            }
+                )
+
+        return {
+            "today_usage": today_usage,
+            "historical_usage": historical_usage,
+            "here_daily_limit": 1000,
+            "here_window_used": window_used,
+            "here_daily_remaining": 1000 - window_used,
+            # None = no active window; the next HERE call opens one.
+            "here_resets_at": window_resets_at,
+        }
 
     def manually_update_address(
         self,
