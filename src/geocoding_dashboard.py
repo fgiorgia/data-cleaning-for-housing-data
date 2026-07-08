@@ -1,6 +1,6 @@
 """Address Geocoding Dashboard (Dash) - fixed for the merged repo.
 
-Run with:  uv run poe geocoding-dashboard   (DB_DATABASE defaults to 'housing')
+Run with:  uv run poe geocoding-dashboard   (DB_DATABASE is 'geocoded_housing')
 """
 
 from typing import Any, Optional
@@ -35,7 +35,7 @@ NASHVILLE = {"lat": 36.1627, "lon": -86.7816}
 _MAPLIBRE = hasattr(px, "scatter_map")
 
 # --------------------------------------------------------------------------
-# Data access - all against unique_addresses in the restored 'housing' DB
+# Data access - all against unique_addresses in the restored 'geocoded_housing' DB
 # --------------------------------------------------------------------------
 
 

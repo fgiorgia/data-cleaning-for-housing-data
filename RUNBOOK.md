@@ -5,12 +5,13 @@ that share the same machine setup but target different databases:
 
 | Workflow | Command | Database | Tables after run |
 | --- | --- | --- | --- |
-| **Cleaning pipeline** | `uv run poe data-cleaning-pipeline` | `postgres` (default) | Dropped — `out/dataset.csv` is the deliverable |
-| **Backup restore** | `uv run poe restore-backup` | `housing` (dedicated) | Persist — browse them in DBeaver / psql |
-| **Feature tools** | `uv run poe geocoding-dashboard` (and others) | `housing` (dedicated) | Read/write the restored tables (§3) |
+| **Cleaning pipeline** | `uv run poe data-cleaning-pipeline` | `housing_clean` (auto-created) | Dropped — `out/dataset.csv` is the deliverable |
+| **Backup restore** | `uv run poe restore-backup` | `geocoded_housing` (auto-created) | Persist — browse them in DBeaver / psql |
+| **Feature tools** | `uv run poe geocoding-dashboard` (and others) | `geocoded_housing` | Read/write the restored tables (§3) |
 
-The feature tools are new and all operate on the `housing` database created
-by the backup restore, so run **§2 before §3**.
+Each workflow creates its own database if missing — nothing is created by
+hand. The feature tools all operate on the `geocoded_housing` database
+created by the backup restore, so run **§2 before §3**.
 
 ---
 
@@ -84,7 +85,7 @@ Optional overrides (the defaults work for a standard local install):
 | `DB_HOSTNAME` | `localhost` | Postgres host |
 | `DB_PORT` | `5432` | Postgres port |
 | `DB_USERNAME` | `postgres` | Postgres user |
-| `DB_DATABASE` | `postgres` | Database the **cleaning pipeline** runs in |
+| `DB_DATABASE` | `postgres` | Fallback database for scripts run outside poe (each poe task group pins its own) |
 
 The feature tools (§3) use one additional **optional** variable,
 `HERE_API_KEY`, documented in §3.1. `.env` therefore ends up holding two
@@ -100,22 +101,9 @@ Loads `data/dataset.csv`, cleans it in PostgreSQL, and exports the result to
 
 ### Does the database exist?
 
-By default the pipeline runs in the `postgres` database, which exists in
-every PostgreSQL installation, so **with default settings there is nothing
-to create — skip straight to running the pipeline.**
-
-If you want the pipeline in its own database (recommended once you also use
-the backup restore, which occupies `housing`):
-
-```sh
-psql -h localhost -U postgres -c "CREATE DATABASE housing_clean;"
-```
-
-Then add to `.env`:
-
-```env
-DB_DATABASE=housing_clean
-```
+The pipeline runs in its own `housing_clean` database, and its first step
+(`ensure-clean-db`) creates it if missing — **there is nothing to create by
+hand; skip straight to running the pipeline.**
 
 ### Run
 
@@ -156,7 +144,8 @@ automatically.
 
 ## 2. Backup restore
 
-Restores `data/migration_dump.backup` into a **separate** `housing` database.
+Restores `data/migration_dump.backup` into a **separate** `geocoded_housing`
+database.
 This is the full enriched system: PostGIS geometry, geocoded
 `unique_addresses`, address-mapping and data-quality tables, and the
 address-parsing function library. Unlike the cleaning pipeline, the tables
@@ -165,7 +154,7 @@ tools read and write.
 
 ### First run (database does not exist yet)
 
-The restore script creates the `housing` database for you:
+The restore script creates the `geocoded_housing` database for you:
 
 ```sh
 uv run poe restore-backup
@@ -174,14 +163,14 @@ uv run poe restore-backup
 What it does:
 
 1. Checks that `data/migration_dump.backup` exists.
-2. Creates the `housing` database (using your configured Postgres
-   connection to run `CREATE DATABASE`).
+2. Creates the `geocoded_housing` database (running `CREATE DATABASE`
+   through the always-present `postgres` maintenance database).
 3. Filters the `spatial_ref_sys` data out of the restore list (PostGIS
    repopulates that table on extension creation, so the dump's copy would
    cause duplicate-key conflicts).
-4. Runs `pg_restore` into `housing`.
+4. Runs `pg_restore` into `geocoded_housing`.
 
-**Success** prints `Restore complete -> database 'housing'`.
+**Success** prints `Restore complete -> database 'geocoded_housing'`.
 
 ### Re-run (database already exists)
 
@@ -189,7 +178,7 @@ A plain `restore-backup` will refuse if the database already exists, to
 prevent accidental data loss:
 
 ```
-Database 'housing' already exists. Re-run with --recreate to drop and rebuild it.
+Database 'geocoded_housing' already exists. Re-run with --recreate to drop and rebuild it.
 ```
 
 To drop and rebuild:
@@ -203,7 +192,7 @@ sessions) and then performs a clean restore.
 
 ### What you get
 
-After a successful restore, the `housing` database contains:
+After a successful restore, the `geocoded_housing` database contains:
 
 | Table / View | Purpose |
 | --- | --- |
@@ -216,8 +205,8 @@ After a successful restore, the `housing` database contains:
 | `geocoding_status` (view) | Summary of geocoding completeness |
 | `address_components_view` (view) | Parsed address parts |
 
-Connect DBeaver to **database `housing`** (not `postgres`) to see all of
-these under Schemas → public → Tables.
+Connect DBeaver to **database `geocoded_housing`** (not `postgres`) to see
+all of these under Schemas → public → Tables.
 
 ### Troubleshooting
 
@@ -225,22 +214,20 @@ these under Schemas → public → Tables.
 | --- | --- | --- |
 | `Error: Missing Postgres password` | No `DB_PASSWORD` | Create `.env` (step 0.3) |
 | `Error: backup file not found` | `data/migration_dump.backup` missing | Make sure the file is present (it ships with the repo) |
-| `Error: refusing to target the configured database 'postgres'` | `--dbname` matches `DB_DATABASE` | The restore deliberately refuses to overwrite your working database; use the default `housing` or pick another name with `--dbname` |
-| `Database 'housing' already exists` | Previous restore succeeded | Use `restore-backup-fresh` to rebuild, or connect to the existing database — it's already set up |
+| `Error: refusing to target '...'` | `--dbname` matches `DB_DATABASE` or `postgres` | The restore deliberately refuses to overwrite your working or maintenance database; use the default `geocoded_housing` or pick another name with `--dbname` |
+| `Database 'geocoded_housing' already exists` | Previous restore succeeded | Use `restore-backup-fresh` to rebuild, or connect to the existing database — it's already set up |
 | `Could not find 'pg_restore'` | PostgreSQL bin directory not on `PATH` | Add it (e.g. `export PATH="/usr/lib/postgresql/17/bin:$PATH"` on Linux, or `C:\Program Files\PostgreSQL\17\bin` on Windows) |
 | `extension "postgis" is not available` | PostGIS not installed | Install it (step 0.1, Extensions) |
 | `duplicate key value violates unique constraint` on `spatial_ref_sys` | Stale `out/restore_toc.list` from a previous interrupted run | Delete `out/restore_toc.list` and re-run |
 
 ---
 
-## 3. Feature tools (the `housing` database)
+## 3. Feature tools (the `geocoded_housing` database)
 
-These tasks operate on the restored `housing` database. They all read or write
-`unique_addresses` / `address_mappings` / `housing_data`, which **only exist
-in `housing`**, so each task defaults `DB_DATABASE` to `housing`. That
-default is overridable: set `DB_DATABASE` in your shell to retarget (e.g.
-`export DB_DATABASE=housing_clean` on Linux/macOS, `$env:DB_DATABASE =
-"..."` on Windows PowerShell).
+These tasks operate on the restored `geocoded_housing` database. They all
+read or write `unique_addresses` / `address_mappings` / `housing_data`,
+which **only exist in `geocoded_housing`**, so each task pins `DB_DATABASE`
+to `geocoded_housing` in `pyproject.toml`.
 
 **Prerequisite:** run `uv run poe restore-backup` (§2) first. Without it these
 tools connect to a database that has no `unique_addresses` table and abort.
@@ -278,6 +265,7 @@ work with this endpoint.
 | Task | Local URL | What it does |
 | --- | --- | --- |
 | `uv run poe address-standardization` | — | (Re)applies `src/address_standardization.sql` and refreshes `address_standardized`. Idempotent (`CREATE OR REPLACE` / `ADD COLUMN IF NOT EXISTS`), safe to re-run. |
+| `uv run poe address-imputation` | — | Adds `property_address_imputed` / `owner_address_imputed` flags to `housing_data`, reconstructing which addresses the original migration filled in (by comparing against `data/dataset.csv`), and re-applies the parcel-sibling fills. Idempotent, safe to re-run. |
 | `uv run poe geocoder --stats-only` | — | Geocoding CLI. `--stats-only` reports API usage + DB completeness **without spending any API calls**. Drop the flag to actually geocode. |
 | `uv run poe show-map` | opens `nashville_property_map.html` | Renders a clustered Folium map of geocoded properties. The HTML is a generated artifact (gitignored); regenerate any time. |
 | `uv run poe data-quality-check` | <http://localhost:8501> | Streamlit dashboard over `housing_data` (data-quality issues). |
@@ -319,12 +307,12 @@ reachable from other machines.
 
 **Optional indexes.** As the pending set shrinks, a partial index makes the
 queue query an index scan instead of a sequential scan. Run once against
-`housing`:
+`geocoded_housing`:
 
 ```sh
-# Linux/macOS: DB_DATABASE=housing uv run python ./scripts/psql_with_config.py -c "..."
+# Linux/macOS: DB_DATABASE=geocoded_housing uv run python ./scripts/psql_with_config.py -c "..."
 # Windows PowerShell:
-$env:DB_DATABASE = "housing"
+$env:DB_DATABASE = "geocoded_housing"
 uv run python ./scripts/psql_with_config.py -c "CREATE INDEX IF NOT EXISTS idx_ua_needs_attention ON unique_addresses (address_id) WHERE status = 'FAILED' OR latitude IS NULL OR longitude IS NULL; CREATE INDEX IF NOT EXISTS idx_ua_status ON unique_addresses (status);"
 Remove-Item Env:\DB_DATABASE
 ```
@@ -343,7 +331,8 @@ Three layers, quickest to most authoritative:
    line like `Manually updated address ID 4711 by <name>` on each save,
    alongside the normal `POST /_dash-update-component ... 200` access lines.
 
-3. **In the database (the audit trail of record).** Run against `housing`:
+3. **In the database (the audit trail of record).** Run against
+   `geocoded_housing`:
 
    ```sql
    SELECT l.changed_at, l.changed_by, ua.address, l.field_changed,
@@ -365,8 +354,9 @@ Three layers, quickest to most authoritative:
    LIMIT 10;
    ```
 
-   Run these in DBeaver connected to `housing`, or from the shell with
-   `DB_DATABASE=housing` set (as in the index example above). One modal save
+   Run these in DBeaver connected to `geocoded_housing`, or from the shell
+   with `DB_DATABASE=geocoded_housing` set (as in the index example above).
+   One modal save
    can produce two log rows — one for `corrected_address`, one for
    `coordinates` — which is correct, not duplication.
 
@@ -375,12 +365,12 @@ Three layers, quickest to most authoritative:
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | `HERE geocoding failed with status 401: apiKey invalid. apiKey not found` | The `HERE_API_KEY` value sent is stale, mistyped, or shadowed by a shell variable | Verify the key in isolation (below); check `.env` has `HERE_API_KEY=...` with no quotes/trailing space; check `$env:HERE_API_KEY` isn't set in your shell (`load_dotenv` won't override it); regenerate the key in the HERE portal if it's dead. The geocoder keeps running OSM-only meanwhile. |
-| `HERE API daily limit reached` | Local counter hit its 950/day safety margin | Wait for the date to roll over (the counter is per-day), or geocode OSM-only for the rest of the day |
+| `HERE API quota reached for the current 24h window` | Local counter hit its 950-per-window safety margin | Wait for the window to expire — the quota re-enables 24 hours after the first HERE call that opened it (the exact time is in the warning and in `--stats-only`) — or geocode OSM-only meanwhile |
 | Browser shows "Server Unavailable / the server did not respond" | The Dash process isn't running, was swapped while running, or the console is frozen by Windows Quick Edit (text selected in the terminal) | Confirm the task is running; press Enter/Esc in its console; relaunch and hard-refresh (Ctrl+F5) |
-| `Address already in use` on launch | A previous dashboard process still owns port 8050 (or 8501 for Streamlit) | Kill the stale process — e.g. PowerShell: `Get-Process -Id (Get-NetTCPConnection -LocalPort 8050).OwningProcess | Stop-Process` |
+| `Address already in use` on launch | A previous dashboard process still owns port 8050 (or 8501 for Streamlit) | Kill the stale process — e.g. PowerShell: `Get-Process -Id (Get-NetTCPConnection -LocalPort 8050).OwningProcess \| Stop-Process` |
 | Map is blank but the table has rows | Those rows aren't geocoded yet (no coordinates) | Expected under "Pending" / "Needs attention"; switch to "Geocoded" to see plotted points |
 | `ModuleNotFoundError: dash` / `streamlit` / `requests` | Dependencies not synced (e.g. after pulling the merge) | `uv sync` |
-| Required tables missing (`unique_addresses`, `address_mappings`, `housing_data`) | Running a feature tool before the backup restore, or against the wrong database | Run `uv run poe restore-backup` (§2); confirm `DB_DATABASE` is `housing` |
+| Required tables missing (`unique_addresses`, `address_mappings`, `housing_data`) | Running a feature tool before the backup restore, or against the wrong database | Run `uv run poe restore-backup` (§2); confirm `DB_DATABASE` is `geocoded_housing` |
 
 **Verify a HERE key without the app in the way** (PowerShell):
 
@@ -410,16 +400,17 @@ instead (see the README for setup).
 ### Backup restore output
 
 1. DBeaver → New Database Connection → PostgreSQL.
-2. Host: `localhost`, Port: `5432`, **Database: `housing`**, User:
+2. Host: `localhost`, Port: `5432`, **Database: `geocoded_housing`**, User:
    `postgres`, Password: your `DB_PASSWORD`.
 3. Test Connection → Finish.
-4. Expand: housing → Schemas → public → Tables.
+4. Expand: geocoded_housing → Schemas → public → Tables.
 
 If you already have a connection open to `postgres` and wonder why the tables
-aren't there: the restore targets `housing`, a separate database. Either
-create a new connection pointing to `housing`, or tick **Show all databases**
-in your existing connection's PostgreSQL tab (right-click connection → Edit
-Connection → PostgreSQL) and then expand the `housing` node.
+aren't there: the restore targets `geocoded_housing`, a separate database.
+Either create a new connection pointing to `geocoded_housing`, or tick
+**Show all databases** in your existing connection's PostgreSQL tab
+(right-click connection → Edit Connection → PostgreSQL) and then expand the
+`geocoded_housing` node.
 
 After any pipeline or restore run, press **F5** on the connection to refresh
 DBeaver's metadata cache.
