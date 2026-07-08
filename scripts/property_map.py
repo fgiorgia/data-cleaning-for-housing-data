@@ -1,5 +1,8 @@
 import argparse
+import json
+import math
 import sys
+from bisect import bisect_right
 from datetime import datetime
 
 import folium
@@ -9,6 +12,45 @@ from sqlalchemy import text
 
 from scripts.config import get_db_config
 from scripts.db import get_engine
+
+# Sequential warm ramp, light -> dark = cheap -> expensive, so marker color
+# is ordered like the value it encodes. Each entry is (awesome-markers pin
+# name, that pin's fill hex, readable text color on that fill); the hexes are
+# reused for cluster icons and the legend so every layer matches the pins.
+PRICE_BUCKETS: list[tuple[str, str, str]] = [
+    ("beige", "#FFCB92", "#303030"),
+    ("orange", "#F69730", "#303030"),
+    ("red", "#D63E2A", "#FFFFFF"),
+    ("darkred", "#A23336", "#FFFFFF"),
+]
+
+
+def nice_round(value: float) -> float:
+    """Round to 2 significant digits so breakpoints read cleanly in the legend."""
+    if value <= 0:
+        return 0.0
+    magnitude = 10 ** (math.floor(math.log10(value)) - 1)
+    return float(round(value / magnitude) * magnitude)
+
+
+def compute_price_breaks(prices: "pd.Series[float]") -> list[float]:
+    """Quartile breakpoints from the actual data: four equal-count buckets.
+
+    Derived from the dataset rather than hardcoded so the ranges stay
+    meaningful whatever the price distribution is (a $2k-$50k dataset gets
+    $2k-$50k buckets, not everything under the lowest fixed threshold).
+    """
+    quartiles = [float(prices.quantile(q)) for q in (0.25, 0.5, 0.75)]
+    breaks = [nice_round(q) for q in quartiles]
+    # Rounding can collapse near-equal quartiles; fall back to exact values.
+    if len(set(breaks)) < 3:
+        breaks = quartiles
+    return sorted(breaks)
+
+
+def price_bucket(price: float, breaks: list[float]) -> int:
+    """Index into PRICE_BUCKETS; a price equal to a breakpoint goes up."""
+    return bisect_right(breaks, price)
 
 
 def main() -> None:
@@ -158,8 +200,49 @@ def create_property_map(args: argparse.Namespace) -> None:
         # Create a map centered on the data
         m = folium.Map(location=[center_lat, center_lng], zoom_start=12)
 
-        # Add a marker cluster for better performance with many markers
-        marker_cluster = MarkerCluster().add_to(m)
+        # Price buckets come from the data's own quartiles, not fixed dollar
+        # thresholds (see compute_price_breaks).
+        price_breaks = compute_price_breaks(properties_df["sale_price"])
+
+        # Add a marker cluster for better performance with many markers.
+        # Leaflet's default cluster icon is colored by marker COUNT (green =
+        # few markers), which reads as "cheap" next to the price-colored pins
+        # - a $600k+ street showed green until zoomed in. Color clusters by
+        # the median price of their children instead, on the same ramp, with
+        # a border and dark-on-light count text as contrast relief for the
+        # lightest step.
+        icon_create_function = f"""
+        function(cluster) {{
+            var breaks = {json.dumps(price_breaks)};
+            var colors = {json.dumps([hex for _, hex, _ in PRICE_BUCKETS])};
+            var textColors = {json.dumps([tc for _, _, tc in PRICE_BUCKETS])};
+            var prices = [];
+            cluster.getAllChildMarkers().forEach(function(marker) {{
+                if (marker.options && typeof marker.options.price === 'number') {{
+                    prices.push(marker.options.price);
+                }}
+            }});
+            prices.sort(function(a, b) {{ return a - b; }});
+            var n = prices.length;
+            var median = n === 0 ? 0 : (n % 2 === 1
+                ? prices[(n - 1) / 2]
+                : (prices[n / 2 - 1] + prices[n / 2]) / 2);
+            var i = 0;
+            while (i < breaks.length && median >= breaks[i]) {{ i++; }}
+            return L.divIcon({{
+                html: '<div style="background:' + colors[i] + ';color:' + textColors[i]
+                    + ';border:2px solid rgba(0,0,0,0.35);border-radius:50%;'
+                    + 'width:36px;height:36px;line-height:32px;text-align:center;'
+                    + 'font:bold 12px Arial;box-shadow:0 0 0 4px ' + colors[i] + '55;">'
+                    + cluster.getChildCount() + '</div>',
+                className: '',
+                iconSize: L.point(36, 36)
+            }});
+        }}
+        """
+        marker_cluster = MarkerCluster(
+            icon_create_function=icon_create_function
+        ).add_to(m)
 
         # Add information about the dataset
         price_min = properties_df["sale_price"].min()
@@ -195,16 +278,9 @@ def create_property_map(args: argparse.Namespace) -> None:
             ),
         ).add_to(m)
 
-        # Define a function to color markers based on price
         def get_price_color(price: float) -> str:
-            if price < 200000:
-                return "green"
-            elif price < 400000:
-                return "blue"
-            elif price < 600000:
-                return "orange"
-            else:
-                return "red"
+            """Pin color from the data-driven bucket the price falls in."""
+            return PRICE_BUCKETS[price_bucket(price, price_breaks)][0]
 
         # Add markers for each property
         for idx, row in properties_df.iterrows():
@@ -282,26 +358,45 @@ def create_property_map(args: argparse.Namespace) -> None:
             </div>
             """
 
-            # Add marker to map with color based on price
+            # Add marker to map with color based on price. The extra `price`
+            # option rides along on the Leaflet marker so the cluster's
+            # icon_create_function can aggregate its children's prices.
             folium.Marker(
                 location=[row["latitude"], row["longitude"]],
                 popup=folium.Popup(popup_content, max_width=300),
                 tooltip=f"${row['sale_price']:,.0f}",
                 icon=folium.Icon(color=get_price_color(row["sale_price"])),
+                price=float(row["sale_price"]),
             ).add_to(marker_cluster)
 
-        # Add a legend for price ranges
-        legend_html = """
-        <div style="position: fixed; 
-                    bottom: 50px; right: 50px; width: 180px; height: 120px; 
-                    border:2px solid grey; z-index:9999; font-size:12px;
-                    background-color:white; padding: 10px;
-                    border-radius:5px;">
-        <div style="font-weight: bold; margin-bottom: 5px;">Price Range</div>
-        <div><i class="fa fa-circle" style="color:green"></i> Under $200,000</div>
-        <div><i class="fa fa-circle" style="color:blue"></i> $200,000 - $399,999</div>
-        <div><i class="fa fa-circle" style="color:orange"></i> $400,000 - $599,999</div>
-        <div><i class="fa fa-circle" style="color:red"></i> $600,000+</div>
+        # Add a legend for price ranges, built from the same breakpoints and
+        # hexes the pins and clusters use.
+        bucket_labels = [
+            f"Under ${price_breaks[0]:,.0f}",
+            f"${price_breaks[0]:,.0f} - ${price_breaks[1]:,.0f}",
+            f"${price_breaks[1]:,.0f} - ${price_breaks[2]:,.0f}",
+            f"${price_breaks[2]:,.0f}+",
+        ]
+        legend_rows = "\n".join(
+            f'<div style="margin: 2px 0;">'
+            f'<span style="display: inline-block; width: 12px; height: 12px;'
+            f" background: {hex_color}; border: 1px solid rgba(0,0,0,0.35);"
+            f' border-radius: 50%; margin-right: 6px; vertical-align: -1px;"></span>'
+            f"{label}</div>"
+            for (_, hex_color, _), label in zip(PRICE_BUCKETS, bucket_labels)
+        )
+        legend_html = f"""
+        <div style="position: fixed;
+                    bottom: 50px; right: 50px; width: 200px;
+                    border: 2px solid grey; z-index: 9999; font-size: 12px;
+                    font-family: Arial; color: #303030;
+                    background-color: white; padding: 10px;
+                    border-radius: 5px;">
+        <div style="font-weight: bold; margin-bottom: 5px;">Sale Price</div>
+        {legend_rows}
+        <div style="margin-top: 6px; font-size: 11px; color: #575757;">
+        Clusters: color = median price of the grouped homes, number = how many
+        </div>
         </div>
         """
         m.get_root().html.add_child(folium.Element(legend_html))
