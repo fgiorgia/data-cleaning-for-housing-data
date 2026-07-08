@@ -77,6 +77,7 @@ DB_DATABASE = "postgres"
 # restore-backup, which creates it if missing.
 address-standardization = { cmd = "python ./scripts/psql_with_config.py -f ./src/address_standardization.sql", env = { DB_DATABASE = "geocoded_housing" } }
 address-imputation = { cmd = "python ./scripts/psql_with_config.py -f ./src/address_imputation.sql", env = { DB_DATABASE = "geocoded_housing" } }
+data-quality-maintenance = { cmd = "python ./scripts/psql_with_config.py -f ./src/data_quality_maintenance.sql", env = { DB_DATABASE = "geocoded_housing" } }
 geocoder = { cmd = "python ./src/geocoding_integration.py", env = { DB_DATABASE = "geocoded_housing" } }
 geocoding-dashboard = { cmd = "python ./src/geocoding_dashboard.py", env = { DB_DATABASE = "geocoded_housing" } }
 data-quality-check = { cmd = "streamlit run ./scripts/data_quality_dashboard.py", env = { DB_DATABASE = "geocoded_housing" } }
