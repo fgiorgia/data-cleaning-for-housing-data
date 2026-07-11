@@ -1,10 +1,10 @@
 # Secrets
 .pgpass
 
-# Pipeline artifacts (out/ covers dataset.csv and restore_toc.list)
+# Pipeline artifacts (out/ covers dataset.csv, dataset_public.csv, restore_toc.list)
 out/
 data/dataset_no_bom.csv
-data/original_migration_dump.backup
+data/*.backup
 data/Nashville_housing_data_2013_2016.csv
 # Skills in this repo are private
 .agents
