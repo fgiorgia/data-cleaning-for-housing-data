@@ -4,9 +4,11 @@ import math
 import sys
 from bisect import bisect_right
 from datetime import datetime
+from typing import cast
 
 import folium
 import pandas as pd
+from branca.element import Figure
 from folium.plugins import MarkerCluster
 from sqlalchemy import text
 
@@ -85,8 +87,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--output",
-        default="nashville_property_map.html",
-        help="Output HTML file path (default: nashville_property_map.html)",
+        default="out/nashville_property_map.html",
+        help="Output HTML file path (default: out/nashville_property_map.html)",
     )
     parser.add_argument(
         "--limit",
@@ -133,6 +135,8 @@ def create_property_map(args: argparse.Namespace) -> None:
     try:
         with engine.connect() as conn:
             result = conn.execute(text(check_query)).fetchone()
+            if result is None:
+                raise RuntimeError("Table-existence check returned no row")
             housing_data_exists, address_mappings_exists, unique_addresses_exists = (
                 result
             )
@@ -283,7 +287,7 @@ def create_property_map(args: argparse.Namespace) -> None:
             return PRICE_BUCKETS[price_bucket(price, price_breaks)][0]
 
         # Add markers for each property
-        for idx, row in properties_df.iterrows():
+        for _, row in properties_df.iterrows():
             # Format sale date
             sale_date = row["sale_date"]
             if pd.notna(sale_date):
@@ -399,7 +403,10 @@ def create_property_map(args: argparse.Namespace) -> None:
         </div>
         </div>
         """
-        m.get_root().html.add_child(folium.Element(legend_html))
+        # folium types get_root() as a bare Element; at runtime the map root
+        # is a branca Figure, which is what carries the .html slot.
+        root = cast(Figure, m.get_root())
+        root.html.add_child(folium.Element(legend_html))
 
         # Save the map
         m.save(args.output)

@@ -45,5 +45,7 @@ def get_engine(db_config: DBConfig | None = None) -> Engine:
     """
     config: DBConfig = db_config if db_config is not None else get_db_config()
     if config["password"] is None:
-        raise ValueError("Missing Postgres password: set DB_PASSWORD in .env or the environment.")
+        raise ValueError(
+            "Missing Postgres password: set DB_PASSWORD in .env or the environment."
+        )
     return create_engine(build_url(config))

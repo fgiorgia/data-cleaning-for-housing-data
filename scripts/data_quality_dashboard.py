@@ -1,4 +1,5 @@
-import numpy as np
+from typing import cast
+
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -81,7 +82,7 @@ def get_data_quality_stats(df: pd.DataFrame) -> pd.DataFrame:
 
         # Data type specific stats
         dtype = df[col].dtype
-        if np.issubdtype(dtype, np.number):
+        if pd.api.types.is_numeric_dtype(df[col]):
             min_val = df[col].min()
             max_val = df[col].max()
             mean_val = df[col].mean()
@@ -302,7 +303,7 @@ def render_dashboard():
             blocks: list[list[str]] = []
             for col in ordered.index:
                 for block in blocks:
-                    if corr_matrix.loc[col, block[0]] >= 0.95:
+                    if cast(float, corr_matrix.loc[col, block[0]]) >= 0.95:
                         block.append(col)
                         break
                 else:
