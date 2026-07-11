@@ -7,8 +7,9 @@
 #   ./scripts/test_everything.sh --skip-dashboards    # skip interactive tools
 #
 # Database layout (fully automated — no DB_DATABASE needed anywhere):
-#   housing_clean     — cleaning pipeline (created by the ensure-clean-db step)
-#   geocoded_housing  — enriched system (created by restore-backup)
+#   geocoded_housing — single database for cleaning, the geocode cache, and
+#                      all feature tools (created by the ensure-geocoded-db
+#                      step; see pyproject.toml)
 #
 # Prerequisites: PostgreSQL running, .env with DB_PASSWORD, extensions
 # installed (fuzzystrmatch, postgis, pgagent). See RUNBOOK §0.
@@ -47,9 +48,9 @@ fail() { echo -e "  ${RED}✗ ${1}${NC}"; exit 1; }
 
 run_step "Load credentials"
 # Source .env for DB_PASSWORD. DB_DATABASE is deliberately unset afterwards:
-# each poe task carries its own default (pipeline: housing_clean, feature
-# tools: housing), and a shell-level DB_DATABASE would override all of them —
-# which is exactly the accident this prevents.
+# every poe task pins its own DB_DATABASE=geocoded_housing, and a shell-level
+# DB_DATABASE would override all of them — which is exactly the accident
+# this prevents.
 if [ -f .env ]; then
   set -a; source .env; set +a
 fi
@@ -83,13 +84,9 @@ rm -rf out/
 rm -f  geocoding.log geocoding_cli.log
 pass "Intermediate files removed"
 
-run_step "Drop project databases"
-$PG -d "$MAINT_DB" -c 'DROP DATABASE IF EXISTS housing_clean WITH (FORCE);'         2>/dev/null || true
-pass "Dropped 'housing_clean' (pipeline DB — ensure-clean-db recreates it)"
+run_step "Drop project database"
 $PG -d "$MAINT_DB" -c 'DROP DATABASE IF EXISTS geocoded_housing WITH (FORCE);'      2>/dev/null || true
-pass "Dropped 'geocoded_housing' (enriched DB — restore-backup recreates it)"
-$PG -d "$MAINT_DB" -c 'DROP DATABASE IF EXISTS geocoded_housing_sanitised_tmp WITH (FORCE);' 2>/dev/null || true
-pass "Dropped temp sanitisation database (if any)"
+pass "Dropped 'geocoded_housing' (ensure-geocoded-db / geocode-prep recreates it)"
 
 # ──────────────────────────────────────────────────────────────────────────── #
 #  PHASE 2 — INSTALL                                                          #
@@ -112,32 +109,29 @@ uv run pyright
 pass "Type-check clean"
 
 run_step "Unit tests (pytest, no database)"
-# Export invariants need out/dataset.csv, which Phase 1 just deleted;
-# they run in Phase 4 via `pytest -m export` after the pipeline rebuilds it.
+# Export invariants need out/dataset.csv and out/dataset_public.csv, which
+# Phase 1 just deleted; they run in Phase 4 via `pytest -m export` after
+# export-dataset rebuilds them.
 uv run pytest -q -m "not export"
 pass "Unit tests passed"
 
 # ──────────────────────────────────────────────────────────────────────────── #
-#  PHASE 4 — CLEANING PIPELINE (housing_clean database, auto-created)         #
+#  PHASE 4 — CLEANING PIPELINE + GEOCODE SYNC + EXPORT                        #
 # ──────────────────────────────────────────────────────────────────────────── #
 
-run_step "Run the from-scratch cleaning pipeline"
-uv run poe data-cleaning-pipeline
-pass "Pipeline complete — out/dataset.csv written"
+run_step "Run the from-scratch cleaning pipeline and sync the geocode cache"
+uv run poe geocode-prep
+pass "Pipeline complete, unique_addresses/address_mappings synced"
+
+run_step "Export dataset CSVs"
+uv run poe export-dataset
+pass "out/dataset.csv and out/dataset_public.csv written"
 
 run_step "Export invariant tests (pytest -m export)"
 uv run pytest -m export -q
 pass "Export invariants passed"
 
-# ──────────────────────────────────────────────────────────────────────────── #
-#  PHASE 5 — BACKUP RESTORE (geocoded_housing database)                       #
-# ──────────────────────────────────────────────────────────────────────────── #
-
-run_step "Restore the enriched housing database from backup"
-uv run poe restore-backup
-pass "Backup restored into 'geocoded_housing'"
-
-# Quick sanity: do the key tables exist?
+# Quick sanity: geocode-prep should have left all 3 core tables in place.
 TABLE_COUNT=$($PG -d geocoded_housing -tAc \
   "SELECT count(*) FROM information_schema.tables
    WHERE table_schema = 'public'
@@ -149,16 +143,12 @@ else
 fi
 
 # ──────────────────────────────────────────────────────────────────────────── #
-#  PHASE 6 — FEATURE TOOLS SMOKE TEST (geocoded_housing database)             #
+#  PHASE 5 — FEATURE TOOLS SMOKE TEST (geocoded_housing database)             #
 # ──────────────────────────────────────────────────────────────────────────── #
 
 run_step "Address standardisation (idempotent SQL)"
 uv run poe address-standardization
 pass "address_standardization.sql applied"
-
-run_step "Geocoder stats (no API calls)"
-uv run poe geocoder --stats-only
-pass "Geocoder stats reported"
 
 run_step "Property map generation"
 uv run poe show-map
@@ -183,19 +173,6 @@ else
 fi
 
 # ──────────────────────────────────────────────────────────────────────────── #
-#  PHASE 7 — SANITISED DUMP EXPORT                                            #
-# ──────────────────────────────────────────────────────────────────────────── #
-
-run_step "Export sanitised dump (privacy redaction)"
-uv run poe export-sanitised-dump
-pass "Sanitised migration_dump.backup written"
-
-# Verify it's a valid pg_dump archive.
-pg_restore --list data/migration_dump.backup > /dev/null 2>&1 \
-  && pass "Dump is a valid pg_restore archive" \
-  || fail "Dump is not a valid archive"
-
-# ──────────────────────────────────────────────────────────────────────────── #
 #  DONE                                                                        #
 # ──────────────────────────────────────────────────────────────────────────── #
 
@@ -205,13 +182,12 @@ echo -e "${GREEN}  All ${step} steps passed.${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 echo "  Deliverables:"
-echo "    out/dataset.csv               — cleaned export"
+echo "    out/dataset.csv               — full export (owner coordinates, LOCAL ONLY)"
+echo "    out/dataset_public.csv        — shareable export (owner coordinates redacted)"
 echo "    nashville_property_map.html   — interactive map"
-echo "    data/migration_dump.backup    — sanitised backup"
 echo ""
-echo "  Databases:"
-echo "    housing_clean     — pipeline workspace (tables dropped after export)"
-echo "    geocoded_housing  — enriched (PostGIS, geocoded addresses)"
+echo "  Database:"
+echo "    geocoded_housing  — cleaning workspace + persistent geocode cache"
 echo ""
 echo "  Next: open nashville_property_map.html in a browser,"
 echo "        or run 'uv run poe geocoding-dashboard' / 'uv run poe data-quality-check'."

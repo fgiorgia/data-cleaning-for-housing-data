@@ -1,7 +1,7 @@
 # Nashville Housing — SQL cleaning pipeline & geo-enrichment
 
-[![CI](https://github.com/fgiorgia/data-cleaning-for-housing-data/actions/workflows/ci.yml/badge.svg)](https://github.com/fgiorgia/data-cleaning-for-housing-data/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/fgiorgia/data-cleaning-for-housing-data/actions/workflows/ci.yaml/badge.svg)](https://github.com/fgiorgia/data-cleaning-for-housing-data/actions/workflows/ci.yaml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
 
 This project started from the classic _Nashville Housing Data_ cleaning
 exercise (the dataset popularised by Alex The Analyst's SQL portfolio
@@ -32,14 +32,18 @@ tutorial) and extends it into a small, reproducible data system:
 data/dataset.csv ──▶ remove_bom ──▶ load_csv ──▶ cleaning.sql (one transaction)
                                                       │
                                                       ▼
-                                              out/dataset.csv (deliverable)
-
-data/migration_dump.backup ──▶ restore-backup ──▶ 'geocoded_housing' DB (PostGIS)
+                                          sync-addresses (upserts the
+                                          durable geocode cache: PostGIS,
+                                          unique_addresses, address_mappings)
                                                       │
                          ┌────────────────────────────┼──────────────────────┐
                          ▼                            ▼                      ▼
-                  geocoder (OSM→HERE)        dashboards (Dash,        property map
-                  + correction log           Streamlit)               (folium)
+                  geocoder (OSM→HERE,         dashboards (Dash,        property map
+                  manual, rate-limited)       Streamlit)               (folium)
+                         │
+                         ▼
+                  export-dataset ──▶ out/dataset.csv        (full, LOCAL ONLY)
+                                  └─▶ out/dataset_public.csv (owner coords redacted)
 ```
 
 ## Data provenance & licensing
@@ -48,7 +52,7 @@ data/migration_dump.backup ──▶ restore-backup ──▶ 'geocoded_housing'
   records, distributed via Kaggle. Public-record data; see the Kaggle page
   for its terms. The raw CSV is included at `data/dataset.csv` for
   reproducibility.
-- **Code:** MIT — see [LICENSE](LICENSE).
+- **Code:** MIT — see [LICENSE.md](LICENSE.md).
 - **Geocoding results:** coordinates in the enriched database derived from
   Nominatim are © [OpenStreetMap](https://www.openstreetmap.org/copyright)
   contributors and available under the
@@ -60,11 +64,12 @@ data/migration_dump.backup ──▶ restore-backup ──▶ 'geocoded_housing'
 Geocoding transmits address strings to third-party services
 (`nominatim.openstreetmap.org`, and HERE on fallback). This dataset is
 public property-sale data, but treat the pattern as the general rule:
-geocoding sends location data to a third party. The distributed backup is
-**sanitised to exclude owner mailing addresses** — only property addresses
-carry coordinates (see `docs/PATCHES.md` §7 for how the sanitised dump is
-produced). If you need to geocode sensitive addresses, prefer a self-hosted
-open-source geocoder such as [Nominatim](https://nominatim.org/),
+geocoding sends location data to a third party. `out/dataset_public.csv`
+(see below) is the **shareable export with owner mailing-address
+coordinates redacted** — only property addresses carry coordinates in that
+file. `out/dataset.csv` keeps both and stays local (`out/` is gitignored,
+never distributed). If you need to geocode sensitive addresses, prefer a
+self-hosted open-source geocoder such as [Nominatim](https://nominatim.org/),
 [Photon](https://github.com/komoot/photon), or
 [Pelias](https://pelias.io/) so the data never leaves your machine.
 
@@ -75,8 +80,8 @@ open-source geocoder such as [Nominatim](https://nominatim.org/),
 A PostgreSQL instance is expected on your machine
 (<https://www.postgresql.org/download/>). The scripts create extensions as
 needed; make sure these are _available_ to the server: `fuzzystrmatch`
-(Levenshtein distance), and — for the backup-based provisioning — `postgis`
-and `pgagent`. The `psql` and `pg_restore` CLI tools must be on your `PATH`.
+(Levenshtein distance), and — for the geocode cache — `postgis` and
+`pgagent`. The `psql` CLI tool must be on your `PATH`.
 
 ### Python
 
@@ -106,16 +111,19 @@ gitignored; verify with `git check-ignore -v .env`.
 
 ## Running the from-scratch cleaning pipeline
 
-Loads `data/dataset.csv` into Postgres, cleans it with
-[`src/cleaning.sql`](src/cleaning.sql), and exports **`out/dataset.csv`**:
+Loads `data/dataset.csv` into Postgres and cleans it with
+[`src/cleaning.sql`](src/cleaning.sql):
 
 ```sh
 uv run poe data-cleaning-pipeline
 ```
 
-The working tables (`"HousingDataRaw"`, `housing_data`) are dropped once the
-export succeeds; the cleaned CSV is the deliverable. Use
-`data-cleaning-pipeline-keep` to keep `housing_data` for inspection.
+The working tables (`"HousingDataRaw"`, `housing_data`) are dropped once
+cleaning succeeds. This step alone produces no CSV — see "Building the
+geocode cache and exporting" below for the full path to
+`out/dataset.csv`/`out/dataset_public.csv`. Use `data-cleaning-pipeline-keep`
+to keep `housing_data` around instead of dropping it (needed before syncing
+addresses into the geocode cache, and useful for inspection).
 
 ### Pipeline behaviour
 
@@ -133,29 +141,36 @@ export succeeds; the cleaned CSV is the deliverable. Use
 - **Output types.** `sale_date` is a date, `sale_price` is numeric (decimals
   preserved), `sold_as_vacant` is a boolean (`t`/`f` in the CSV).
 
-## Provisioning the full enriched database
+## Building the geocode cache and exporting
 
 The full system — PostGIS geometry, geocoded `unique_addresses`,
 address-mapping and data-quality tables, and the address-parsing function
-library — depends on external geocoding that cannot be reproduced in pure
-SQL, so it is captured as a binary archive and restored rather than
-re-derived. Its authoritative, readable schema is committed at
-[`src/schema.sql`](src/schema.sql).
-
-The backup is stored with **Git LFS** (`git lfs pull` after cloning if your
-clone is missing it). The restore targets a dedicated database (default
-`geocoded_housing`) so it never collides with the cleaning pipeline, and
-creates it if missing — no manual `CREATE DATABASE` needed:
+library — lives in a single database, `geocoded_housing`. Its authoritative,
+readable schema is committed at [`src/schema.sql`](src/schema.sql). Unlike
+the cleaning pipeline's disposable working tables, this geocode cache
+**persists and is never dropped or truncated** by any automated step —
+population is upsert-only, so re-running never re-geocodes or loses
+existing corrections.
 
 ```sh
-uv run poe restore-backup          # creates the database if missing
-uv run poe restore-backup-fresh    # drops and rebuilds it
+uv run poe geocode-prep      # cleans housing_data, then upserts addresses
+                              # into unique_addresses/address_mappings
+uv run poe geocoder          # optional: geocode with your own API keys
+                              # (manual, rate-limited -- never run in CI)
+uv run poe export-dataset    # writes out/dataset.csv and
+                              # out/dataset_public.csv from whatever the
+                              # cache currently holds
 ```
 
-## Feature tools (restored `geocoded_housing` database)
+`export-dataset` works with a partially- or un-geocoded cache (a LEFT JOIN
+leaves coordinates blank), so you can run it right after `geocode-prep`
+without ever running the geocoder — or just use the published
+`out/dataset_public.csv` if you don't need your own fresh geocodes.
+
+## Feature tools (the `geocoded_housing` database)
 
 Each task sets `DB_DATABASE` to `geocoded_housing` (the database
-`restore-backup` provisions).
+`geocode-prep` provisions).
 
 | Task                                   | What it does                                                                                          |
 | -------------------------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -174,17 +189,19 @@ second, identifying `User-Agent`).
 ## Quality gates
 
 ```sh
-uv run poe lint        # ruff check + format check
-uv run poe typecheck   # mypy
-uv run poe test        # pytest (unit tests)
-uv run poe check       # all of the above
+uv run poe lint          # black --check
+uv run poe typecheck     # pyright (strict)
+uv run poe test          # pytest (unit tests; export invariants excluded)
+uv run poe test -m export # invariants on the exported CSVs — run export-dataset first
 ```
 
-CI runs the same gates on every push and pull request, then runs the full
-pipeline against a real Postgres 17 service container and asserts invariants
-on the exported CSV (non-empty, no NULL property addresses, boolean
-`sold_as_vacant`, no double spaces). See
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+CI runs the lint/typecheck/test gates on every push and pull request
+([`.github/workflows/ci.yaml`](.github/workflows/ci.yaml)), and separately
+runs the cleaning pipeline against a real Postgres 17 service container
+([`.github/workflows/clean-data.yml`](.github/workflows/clean-data.yml)).
+The export invariants (coordinate bounds, owner-coordinate redaction,
+non-empty, no NULL property addresses, boolean `sold_as_vacant`, no double
+spaces) run locally via `poe test -m export` after an `export-dataset` run.
 
 ## Design decisions & trade-offs
 
@@ -195,9 +212,12 @@ on the exported CSV (non-empty, no NULL property addresses, boolean
 - **Hybrid geocoding** keeps costs at zero for the ~90% of addresses OSM
   resolves, spending the commercial quota only on the remainder — with a
   hard daily cap and a persistent usage counter.
-- **Backup-based provisioning** trades purity for honesty: geocoding results
-  are not reproducible offline, so they are versioned as an artifact with
-  the schema committed in plain SQL for review.
+- **A durable, upsert-only geocode cache instead of a shipped binary dump**:
+  geocoding results are not reproducible offline, so they persist in
+  `unique_addresses`/`address_mappings` and are rebuilt into CSV via
+  `export-dataset` rather than distributed as a database backup. The schema
+  is committed in plain SQL (`src/schema.sql`) for review; consumers who
+  don't want to run their own geocoding just use the published
+  `out/dataset_public.csv`.
 
-See [RUNBOOK.md](RUNBOOK.md) for operations and troubleshooting, and
-[CHANGELOG.md](CHANGELOG.md) for project history.
+See [RUNBOOK.md](RUNBOOK.md) for operations and troubleshooting.

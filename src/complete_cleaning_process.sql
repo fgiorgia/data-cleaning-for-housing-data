@@ -4,9 +4,8 @@ This file contains all steps of the cleaning process to read and modify data.
 
 This is the exploratory, from-scratch narrative against `data/dataset.csv`. The
 authoritative schema and full function library of the final enriched database
-(PostGIS, geocoding, address parsing) is generated from
-`data/migration_dump.backup` into `src/schema.sql`; consult that file for the
-canonical definitions.
+(PostGIS, geocoding, address parsing) lives in `src/schema.sql`; consult that
+file for the canonical definitions.
 
 **/
 
