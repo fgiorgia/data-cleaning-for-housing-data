@@ -292,9 +292,6 @@ BEGIN
 	RAISE NOTICE 'Cleaning Nashville Data complete!';
 END $$;
 
--- Save table back into dataset
-\copy housing_data TO './out/dataset.csv' DELIMITER ',' CSV HEADER;
-
 \if :{?KEEP_TABLES}
     -- Inspection mode: keep housing_data for browsing in DBeaver etc.
     DROP TABLE "HousingDataRaw";
