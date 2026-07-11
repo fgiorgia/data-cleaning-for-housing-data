@@ -120,6 +120,12 @@ data-cleaning-pipeline-keep = [
     "sql-cleanup-keep",
 ]
 
+# Bridges the cleaning pipeline's output into the durable geocode cache
+# (unique_addresses/address_mappings). Never includes `geocoder` -- that
+# stays manual and rate-limited (see src/sync_addresses.sql).
+sync-addresses = { cmd = "python ./scripts/psql_with_config.py -f ./src/sync_addresses.sql", env = { DB_DATABASE = "geocoded_housing_dev" } }
+geocode-prep = ["data-cleaning-pipeline-keep", "sync-addresses"]
+
 # Maintainer-only: produce a privacy-sanitised dump for public distribution.
 # Redacts owner-only geocodes so the committed backup never ships geocoded
 # mailing addresses. Run after geocoding corrections, then commit the result.
