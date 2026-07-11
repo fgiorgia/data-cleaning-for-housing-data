@@ -19,7 +19,7 @@ dependencies = [
     "requests>=2.34.2",
     "dash>=4.3.0",
     "dash-bootstrap-components>=2.0.4",
-    "streamlit>=1.58.0",
+    "streamlit>=1.59.1",
     "plotly>=6.8.0",
 ]
 
