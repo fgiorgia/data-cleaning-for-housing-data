@@ -10,6 +10,13 @@ from scripts.config import get_db_config
 # fall back to the newest versioned install under this directory.
 WINDOWS_PG_BASE = r"C:\Program Files\PostgreSQL"
 
+# Admin commands (existence check, CREATE/DROP DATABASE) must run against a
+# database that is guaranteed to exist — this is the connection psql uses to
+# run CREATE DATABASE, not the database being created. Only "postgres" is
+# guaranteed on a fresh server; the restore target (default geocoded_housing)
+# is created by this script itself.
+MAINTENANCE_DB = "postgres"
+
 
 def find_pg_tool(name: str) -> str:
     on_path = shutil.which(name)
@@ -30,7 +37,9 @@ def find_pg_tool(name: str) -> str:
     )
 
 
-def run(cmd: list[str], env: dict[str, str], capture: bool = False) -> subprocess.CompletedProcess:
+def run(
+    cmd: list[str], env: dict[str, str], capture: bool = False
+) -> subprocess.CompletedProcess[str]:
     # Credentials travel through PGPASSWORD in the environment, never argv, so
     # echoing the command is safe.
     print("+ " + " ".join(cmd))
@@ -42,7 +51,7 @@ def main() -> None:
         description="Restore data/migration_dump.backup into a dedicated database."
     )
     parser.add_argument("--backup", default="./data/migration_dump.backup")
-    parser.add_argument("--dbname", default="housing")
+    parser.add_argument("--dbname", default="geocoded_housing")
     parser.add_argument(
         "--recreate",
         action="store_true",
@@ -60,11 +69,12 @@ def main() -> None:
         print(f"Error: backup file not found: {backup_path}")
         return exit(1)
 
-    # Guard: never drop or overwrite the configured maintenance database.
-    if args.dbname == cfg["database"]:
+    # Guard: never drop or overwrite the configured database or the
+    # maintenance database the admin commands run against.
+    if args.dbname in (cfg["database"], MAINTENANCE_DB):
         print(
-            f"Error: refusing to target the configured database '{cfg['database']}'. "
-            "Choose a dedicated --dbname (default: housing)."
+            f"Error: refusing to target '{args.dbname}'. "
+            "Choose a dedicated --dbname (default: geocoded_housing)."
         )
         return exit(1)
 
@@ -76,19 +86,28 @@ def main() -> None:
 
     admin = [
         psql,
-        "--host", cfg["hostname"],
-        "--port", cfg["port"],
-        "--username", cfg["username"],
-        "--dbname", cfg["database"],
+        "--host",
+        cfg["hostname"],
+        "--port",
+        cfg["port"],
+        "--username",
+        cfg["username"],
+        "--dbname",
+        MAINTENANCE_DB,
         "-X",
-        "-v", "ON_ERROR_STOP=1",
+        "-v",
+        "ON_ERROR_STOP=1",
     ]
 
-    exists = run(
-        admin + ["-tAc", f"SELECT 1 FROM pg_database WHERE datname = '{args.dbname}'"],
-        env=env,
-        capture=True,
-    ).stdout.strip() == "1"
+    exists = (
+        run(
+            admin
+            + ["-tAc", f"SELECT 1 FROM pg_database WHERE datname = '{args.dbname}'"],
+            env=env,
+            capture=True,
+        ).stdout.strip()
+        == "1"
+    )
 
     if exists and not args.recreate:
         print(
@@ -98,7 +117,10 @@ def main() -> None:
         return exit(1)
 
     if exists and args.recreate:
-        run(admin + ["-c", f'DROP DATABASE IF EXISTS "{args.dbname}" WITH (FORCE)'], env=env)
+        run(
+            admin + ["-c", f'DROP DATABASE IF EXISTS "{args.dbname}" WITH (FORCE)'],
+            env=env,
+        )
 
     run(admin + ["-c", f'CREATE DATABASE "{args.dbname}"'], env=env)
 
@@ -106,7 +128,9 @@ def main() -> None:
     # dump's own copy of that table would raise a duplicate-key conflict. Drop
     # just that data entry from the restore list; everything else loads cleanly.
     toc = run([pg_restore, "-l", str(backup_path)], env=env, capture=True).stdout
-    filtered = [ln for ln in toc.splitlines() if "TABLE DATA public spatial_ref_sys" not in ln]
+    filtered = [
+        ln for ln in toc.splitlines() if "TABLE DATA public spatial_ref_sys" not in ln
+    ]
     toc_path = Path("./out/restore_toc.list")
     toc_path.parent.mkdir(parents=True, exist_ok=True)
     toc_path.write_text("\n".join(filtered) + "\n", encoding="utf-8")
@@ -114,14 +138,19 @@ def main() -> None:
     run(
         [
             pg_restore,
-            "--host", cfg["hostname"],
-            "--port", cfg["port"],
-            "--username", cfg["username"],
-            "--dbname", args.dbname,
+            "--host",
+            cfg["hostname"],
+            "--port",
+            cfg["port"],
+            "--username",
+            cfg["username"],
+            "--dbname",
+            args.dbname,
             "--no-owner",
             "--no-privileges",
             "--exit-on-error",
-            "-L", str(toc_path),
+            "-L",
+            str(toc_path),
             str(backup_path),
         ],
         env=env,

@@ -1,14 +1,26 @@
-.venv
-.env
+# Secrets
 .pgpass
-**/__pycache__
-out/dataset.csv
+
+# Pipeline artifacts (out/ covers dataset.csv and restore_toc.list)
+out/
 data/dataset_no_bom.csv
-nashville_property_map.html
+data/original_migration_dump.backup
+data/Nashville_housing_data_2013_2016.csv
+# Skills in this repo are private
+.agents
+.claude
+.github/copilot-instructions.md
+*.log
+Modelfile
+.hermesrules
+AGENTS.md
+CLAUDE.md
 
 # Agent only dirs
 /.agents/playground/
 /.agents/tasks/
+/.playwright-cli/
+/graphify-out/
 
 
 # Byte-compiled / optimized / DLL files
