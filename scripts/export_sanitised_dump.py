@@ -33,7 +33,7 @@ import sys
 from pathlib import Path
 
 from scripts.config import get_db_config
-from scripts.restore_backup import find_pg_tool, run
+from scripts.pg_tools import find_pg_tool, run
 
 
 def main() -> None:

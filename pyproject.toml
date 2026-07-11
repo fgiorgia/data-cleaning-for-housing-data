@@ -127,6 +127,11 @@ export-sanitised-dump = "python ./scripts/export_sanitised_dump.py"
 restore-backup = "python ./scripts/restore_backup.py"
 restore-backup-fresh = "python ./scripts/restore_backup.py --recreate"
 
+# Disaster-recovery dump of the durable geocode cache (unique_addresses,
+# address_correction_log) — geocoding is manual/rate-limited, so this is the
+# only backup of that work. Output is gitignored (out/geocodes.backup).
+backup-geocodes = { cmd = "python ./scripts/backup_geocodes.py", env = { DB_DATABASE = "geocoded_housing" } }
+
 # Full nuke-and-rebuild: cleans databases + artifacts, runs every gate
 # and every tool. Needs Postgres running with extensions installed.
 test-everything = { shell = "bash tests/test_everything.sh" }
