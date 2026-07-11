@@ -39,7 +39,7 @@ def find_pg_tool(name: str) -> str:
 
 def run(
     cmd: list[str], env: dict[str, str], capture: bool = False
-) -> subprocess.CompletedProcess:
+) -> subprocess.CompletedProcess[str]:
     # Credentials travel through PGPASSWORD in the environment, never argv, so
     # echoing the command is safe.
     print("+ " + " ".join(cmd))
