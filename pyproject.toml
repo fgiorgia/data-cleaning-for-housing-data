@@ -47,10 +47,10 @@ packages = ["src/my_project", "scripts"]
 
 [tool.pytest.ini_options]
 minversion = "9.0"
-addopts = "--import-mode=importlib"
+addopts = "--import-mode=importlib -m \"not export\""
 testpaths = ["tests"]
 markers = [
-    "export: invariant checks on out/dataset.csv — needs a prior data-cleaning-pipeline run",
+    "export: invariant checks on out/dataset.csv and out/dataset_public.csv — needs a prior export-dataset run",
 ]
 
 [tool.black]
@@ -125,6 +125,11 @@ data-cleaning-pipeline-keep = [
 # stays manual and rate-limited (see src/sync_addresses.sql).
 sync-addresses = { cmd = "python ./scripts/psql_with_config.py -f ./src/sync_addresses.sql", env = { DB_DATABASE = "geocoded_housing_dev" } }
 geocode-prep = ["data-cleaning-pipeline-keep", "sync-addresses"]
+
+# Writes out/dataset.csv (full, LOCAL ONLY) and out/dataset_public.csv
+# (owner coordinates redacted) from whatever the geocode cache currently
+# holds. Works with a partially-geocoded cache (LEFT JOIN).
+export-dataset = { cmd = "python ./scripts/export_dataset.py", env = { DB_DATABASE = "geocoded_housing_dev" } }
 
 # Maintainer-only: produce a privacy-sanitised dump for public distribution.
 # Redacts owner-only geocodes so the committed backup never ships geocoded

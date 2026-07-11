@@ -7,8 +7,10 @@
 #   ./scripts/test_everything.sh --skip-dashboards    # skip interactive tools
 #
 # Database layout (fully automated — no DB_DATABASE needed anywhere):
-#   housing_clean     — cleaning pipeline (created by the ensure-clean-db step)
-#   geocoded_housing  — enriched system (created by restore-backup)
+#   geocoded_housing_dev — cleaning/sync pipeline workspace (created by the
+#                          ensure-geocoded-db step; refactor-geocode-lineage
+#                          dev target, see pyproject.toml)
+#   geocoded_housing     — enriched system (created by restore-backup)
 #
 # Prerequisites: PostgreSQL running, .env with DB_PASSWORD, extensions
 # installed (fuzzystrmatch, postgis, pgagent). See RUNBOOK §0.
@@ -112,18 +114,23 @@ uv run pyright
 pass "Type-check clean"
 
 run_step "Unit tests (pytest, no database)"
-# Export invariants need out/dataset.csv, which Phase 1 just deleted;
-# they run in Phase 4 via `pytest -m export` after the pipeline rebuilds it.
+# Export invariants need out/dataset.csv and out/dataset_public.csv, which
+# Phase 1 just deleted; they run in Phase 4 via `pytest -m export` after
+# export-dataset rebuilds them.
 uv run pytest -q -m "not export"
 pass "Unit tests passed"
 
 # ──────────────────────────────────────────────────────────────────────────── #
-#  PHASE 4 — CLEANING PIPELINE (housing_clean database, auto-created)         #
+#  PHASE 4 — CLEANING PIPELINE + GEOCODE SYNC + EXPORT                        #
 # ──────────────────────────────────────────────────────────────────────────── #
 
-run_step "Run the from-scratch cleaning pipeline"
-uv run poe data-cleaning-pipeline
-pass "Pipeline complete — out/dataset.csv written"
+run_step "Run the from-scratch cleaning pipeline and sync the geocode cache"
+uv run poe geocode-prep
+pass "Pipeline complete, unique_addresses/address_mappings synced"
+
+run_step "Export dataset CSVs"
+uv run poe export-dataset
+pass "out/dataset.csv and out/dataset_public.csv written"
 
 run_step "Export invariant tests (pytest -m export)"
 uv run pytest -m export -q
@@ -155,10 +162,6 @@ fi
 run_step "Address standardisation (idempotent SQL)"
 uv run poe address-standardization
 pass "address_standardization.sql applied"
-
-run_step "Geocoder stats (no API calls)"
-uv run poe geocoder --stats-only
-pass "Geocoder stats reported"
 
 run_step "Property map generation"
 uv run poe show-map
@@ -205,13 +208,14 @@ echo -e "${GREEN}  All ${step} steps passed.${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 echo "  Deliverables:"
-echo "    out/dataset.csv               — cleaned export"
+echo "    out/dataset.csv               — full export (owner coordinates, LOCAL ONLY)"
+echo "    out/dataset_public.csv        — shareable export (owner coordinates redacted)"
 echo "    nashville_property_map.html   — interactive map"
 echo "    data/migration_dump.backup    — sanitised backup"
 echo ""
 echo "  Databases:"
-echo "    housing_clean     — pipeline workspace (tables dropped after export)"
-echo "    geocoded_housing  — enriched (PostGIS, geocoded addresses)"
+echo "    geocoded_housing_dev  — pipeline/sync workspace (refactor-geocode-lineage dev target)"
+echo "    geocoded_housing      — enriched (PostGIS, geocoded addresses)"
 echo ""
 echo "  Next: open nashville_property_map.html in a browser,"
 echo "        or run 'uv run poe geocoding-dashboard' / 'uv run poe data-quality-check'."
