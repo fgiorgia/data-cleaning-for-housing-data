@@ -163,7 +163,7 @@ def create_property_map(args: argparse.Namespace) -> None:
             hd.unique_id, 
             hd.property_address,
             ua.address_standardized,
-            hd.sale_price_numeric AS sale_price,
+            hd.sale_price,
             hd.sale_date,
             hd.acreage,
             hd.bedrooms,
@@ -181,8 +181,8 @@ def create_property_map(args: argparse.Namespace) -> None:
         WHERE am.address_type = 'property'
           AND ua.latitude IS NOT NULL 
           AND ua.longitude IS NOT NULL
-          AND hd.sale_price_numeric IS NOT NULL
-        ORDER BY hd.unique_id, hd.sale_price_numeric DESC
+          AND hd.sale_price IS NOT NULL
+        ORDER BY hd.unique_id, hd.sale_price DESC
         LIMIT {args.limit}
         """
 

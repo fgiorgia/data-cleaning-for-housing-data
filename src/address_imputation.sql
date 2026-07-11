@@ -15,8 +15,9 @@ accurate for rows that are still missing an address.
 Idempotent: columns are added with IF NOT EXISTS, the provenance backfill is
 deterministic, and the sibling fills only touch rows that are still NULL.
 
-Limitation: rows absent from data/dataset.csv (the restored database holds a
-few extra records) keep their flags at false - their provenance is unknown.
+Limitation: any row absent from data/dataset.csv keeps its flags at false -
+its provenance is unknown. (With the current lineage housing_data is rebuilt
+from that CSV, so in practice every row is present.)
 
 **/
 
@@ -74,13 +75,13 @@ WHERE s.unique_id = hd.unique_id
   AND hd.owner_address IS NOT NULL
   AND NOT hd.owner_address_imputed;
 
--- Parcel-sibling fills, as in src/cleaning.sql, adapted to this schema's
--- split address/city columns so a copied address keeps a coherent city.
--- Today every fillable row is already filled (the migration did it); these
--- keep the flags accurate if new unfilled rows ever land in this table.
+-- Parcel-sibling fills, as in src/cleaning.sql. The address columns embed
+-- the city ("STREET, CITY[, TN]"), so copying the sibling's address carries
+-- a coherent city with it. cleaning.sql already performs these same fills
+-- when it rebuilds the table; these re-apply them (and the flags) only for
+-- rows that are somehow still NULL, so re-running stays a no-op normally.
 UPDATE housing_data hd
 SET property_address = hd2.property_address,
-    property_city = COALESCE(hd.property_city, hd2.property_city),
     property_address_imputed = true
 FROM housing_data hd2
 WHERE hd.parcel_id = hd2.parcel_id
@@ -90,8 +91,6 @@ WHERE hd.parcel_id = hd2.parcel_id
 
 UPDATE housing_data hd
 SET owner_address = hd2.owner_address,
-    owner_city  = COALESCE(hd.owner_city, hd2.owner_city),
-    owner_state = COALESCE(hd.owner_state, hd2.owner_state),
     owner_address_imputed = true
 FROM housing_data hd2
 WHERE hd.parcel_id = hd2.parcel_id
