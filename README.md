@@ -1,7 +1,7 @@
 # Nashville Housing — SQL cleaning pipeline & geo-enrichment
 
-[![CI](https://github.com/fgiorgia/data-cleaning-for-housing-data/actions/workflows/ci.yml/badge.svg)](https://github.com/fgiorgia/data-cleaning-for-housing-data/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/fgiorgia/data-cleaning-for-housing-data/actions/workflows/ci.yaml/badge.svg)](https://github.com/fgiorgia/data-cleaning-for-housing-data/actions/workflows/ci.yaml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
 
 This project started from the classic _Nashville Housing Data_ cleaning
 exercise (the dataset popularised by Alex The Analyst's SQL portfolio
@@ -52,7 +52,7 @@ data/dataset.csv ──▶ remove_bom ──▶ load_csv ──▶ cleaning.sql 
   records, distributed via Kaggle. Public-record data; see the Kaggle page
   for its terms. The raw CSV is included at `data/dataset.csv` for
   reproducibility.
-- **Code:** MIT — see [LICENSE](LICENSE).
+- **Code:** MIT — see [LICENSE.md](LICENSE.md).
 - **Geocoding results:** coordinates in the enriched database derived from
   Nominatim are © [OpenStreetMap](https://www.openstreetmap.org/copyright)
   contributors and available under the
@@ -189,17 +189,19 @@ second, identifying `User-Agent`).
 ## Quality gates
 
 ```sh
-uv run poe lint        # ruff check + format check
-uv run poe typecheck   # mypy
-uv run poe test        # pytest (unit tests)
-uv run poe check       # all of the above
+uv run poe lint          # black --check
+uv run poe typecheck     # pyright (strict)
+uv run poe test          # pytest (unit tests; export invariants excluded)
+uv run poe test -m export # invariants on the exported CSVs — run export-dataset first
 ```
 
-CI runs the same gates on every push and pull request, then runs the full
-pipeline against a real Postgres 17 service container and asserts invariants
-on the exported CSV (non-empty, no NULL property addresses, boolean
-`sold_as_vacant`, no double spaces). See
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+CI runs the lint/typecheck/test gates on every push and pull request
+([`.github/workflows/ci.yaml`](.github/workflows/ci.yaml)), and separately
+runs the cleaning pipeline against a real Postgres 17 service container
+([`.github/workflows/clean-data.yml`](.github/workflows/clean-data.yml)).
+The export invariants (coordinate bounds, owner-coordinate redaction,
+non-empty, no NULL property addresses, boolean `sold_as_vacant`, no double
+spaces) run locally via `poe test -m export` after an `export-dataset` run.
 
 ## Design decisions & trade-offs
 
@@ -218,5 +220,4 @@ on the exported CSV (non-empty, no NULL property addresses, boolean
   don't want to run their own geocoding just use the published
   `out/dataset_public.csv`.
 
-See [RUNBOOK.md](RUNBOOK.md) for operations and troubleshooting, and
-[CHANGELOG.md](CHANGELOG.md) for project history.
+See [RUNBOOK.md](RUNBOOK.md) for operations and troubleshooting.
