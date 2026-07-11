@@ -1,8 +1,8 @@
 /**
 
-Imputation provenance for the restored geocoded_housing database.
+Imputation provenance for the geocoded_housing database.
 Run by `uv run poe address-imputation` against the database provisioned by
-`restore-backup`.
+`geocode-prep`.
 
 The original migration filled missing addresses (impute_address_with_criteria
 plus parcel-sibling fills) without recording which rows it touched. The source
