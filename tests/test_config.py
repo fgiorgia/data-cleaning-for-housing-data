@@ -31,7 +31,9 @@ def test_defaults_when_env_is_empty(clean_env: None) -> None:
     }
 
 
-def test_environment_overrides(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_environment_overrides(
+    clean_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("DB_HOSTNAME", "db.internal")
     monkeypatch.setenv("DB_PORT", "5433")
     monkeypatch.setenv("DB_DATABASE", "housing")
