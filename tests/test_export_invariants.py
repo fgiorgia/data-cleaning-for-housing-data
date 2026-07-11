@@ -23,7 +23,9 @@ pytestmark = pytest.mark.export
 @pytest.fixture(scope="module")
 def rows() -> list[dict[str, str]]:
     if not EXPORT_PATH.is_file():
-        pytest.fail(f"{EXPORT_PATH} not found - run `uv run poe data-cleaning-pipeline` first.")
+        pytest.fail(
+            f"{EXPORT_PATH} not found - run `uv run poe data-cleaning-pipeline` first."
+        )
     with EXPORT_PATH.open(encoding="utf-8", newline="") as f:
         return list(csv.DictReader(f))
 
@@ -43,7 +45,7 @@ def test_sold_as_vacant_is_boolean(rows: list[dict[str, str]]) -> None:
 
 
 def test_no_double_spaces_remain(rows: list[dict[str, str]]) -> None:
-    offenders: int = sum(1 for r in rows for v in r.values() if v is not None and "  " in v)
+    offenders: int = sum(1 for r in rows for v in r.values() if "  " in v)
     assert offenders == 0, f"{offenders} value(s) still contain double spaces"
 
 

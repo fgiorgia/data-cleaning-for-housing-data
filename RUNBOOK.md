@@ -53,7 +53,7 @@ them once:
 Install [uv](https://docs.astral.sh/uv/), then from the repo root:
 
 ```sh
-uv sync
+uv sync --all-groups
 ```
 
 `uv sync` installs everything in `uv.lock`, including the feature-tool

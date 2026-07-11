@@ -9,6 +9,8 @@ Open-source stack: testcontainers-python + the official postgres image.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 from sqlalchemy import Engine, create_engine, text
 
@@ -17,7 +19,7 @@ PostgresContainer = testcontainers.PostgresContainer
 
 
 @pytest.fixture(scope="module")
-def pg_engine() -> Engine:  # type: ignore[misc]
+def pg_engine() -> Iterator[Engine]:
     try:
         container = PostgresContainer("postgres:17")
         container.start()
@@ -32,9 +34,7 @@ def pg_engine() -> Engine:  # type: ignore[misc]
 def test_duplicate_removal_keeps_lowest_unique_id(pg_engine: Engine) -> None:
     """Mirrors the ROW_NUMBER() de-duplication in src/cleaning.sql."""
     with pg_engine.begin() as conn:
-        conn.execute(
-            text(
-                """
+        conn.execute(text("""
                 CREATE TABLE housing_data (
                     unique_id int PRIMARY KEY,
                     parcel_id text, property_address text,
@@ -44,12 +44,8 @@ def test_duplicate_removal_keeps_lowest_unique_id(pg_engine: Engine) -> None:
                   (1, 'P1', '1808 FOX CHASE DR', 240000, '2016-01-01', 'L1'),
                   (2, 'P1', '1808 FOX CHASE DR', 240000, '2016-01-01', 'L1'),
                   (3, 'P2', '410 ROSEHILL CT',   120000, '2016-02-01', 'L2');
-                """
-            )
-        )
-        conn.execute(
-            text(
-                """
+                """))
+        conn.execute(text("""
                 DELETE FROM housing_data
                 WHERE unique_id IN (
                     SELECT unique_id FROM (
@@ -63,11 +59,11 @@ def test_duplicate_removal_keeps_lowest_unique_id(pg_engine: Engine) -> None:
                     ) ranked
                     WHERE rn > 1
                 );
-                """
-            )
-        )
+                """))
         remaining: list[int] = [
             row[0]
-            for row in conn.execute(text("SELECT unique_id FROM housing_data ORDER BY unique_id"))
+            for row in conn.execute(
+                text("SELECT unique_id FROM housing_data ORDER BY unique_id")
+            )
         ]
     assert remaining == [1, 3]
