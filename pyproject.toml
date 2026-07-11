@@ -93,16 +93,19 @@ data-quality-check = { cmd = "streamlit run ./scripts/data_quality_dashboard.py"
 show-map = { cmd = "python ./scripts/property_map.py", env = { DB_DATABASE = "geocoded_housing" } }
 
 # Cleaning tools: Require an override. MUST be written as inline tables { cmd = "...", env = {...} }.
-ensure-clean-db = { cmd = "python ./scripts/ensure_database.py", env = { DB_DATABASE = "housing_clean" } }
-load-csv = { cmd = "python ./scripts/load_csv.py --datasetFile='./data/dataset_no_bom.csv' --table='HousingDataRaw'", env = { DB_DATABASE = "housing_clean" } }
-sql-install-fuzzystrmatch = { cmd = "python ./scripts/psql_with_config.py -c \"CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;\"", env = { DB_DATABASE = "housing_clean" } }
-sql-cleanup = { cmd = "python ./scripts/psql_with_config.py -f ./src/cleaning.sql", env = { DB_DATABASE = "housing_clean" } }
-sql-cleanup-keep = { cmd = "python ./scripts/psql_with_config.py -v KEEP_TABLES=1 -f ./src/cleaning.sql", env = { DB_DATABASE = "housing_clean" } }
+# DEV NOTE (refactor-geocode-lineage, Phase 2-4): pointed at geocoded_housing_dev
+# while this refactor is developed/gated; Phase 5 flips this to geocoded_housing
+# once the real-database gate re-run passes. housing_clean is retired.
+ensure-geocoded-db = { cmd = "python ./scripts/ensure_database.py", env = { DB_DATABASE = "geocoded_housing_dev" } }
+load-csv = { cmd = "python ./scripts/load_csv.py --datasetFile='./data/dataset_no_bom.csv' --table='HousingDataRaw'", env = { DB_DATABASE = "geocoded_housing_dev" } }
+sql-install-fuzzystrmatch = { cmd = "python ./scripts/psql_with_config.py -c \"CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;\"", env = { DB_DATABASE = "geocoded_housing_dev" } }
+sql-cleanup = { cmd = "python ./scripts/psql_with_config.py -f ./src/cleaning.sql", env = { DB_DATABASE = "geocoded_housing_dev" } }
+sql-cleanup-keep = { cmd = "python ./scripts/psql_with_config.py -v KEEP_TABLES=1 -f ./src/cleaning.sql", env = { DB_DATABASE = "geocoded_housing_dev" } }
 remove-bom = "python ./scripts/remove_bom.py --input='./data/dataset.csv' --output='./data/dataset_no_bom.csv'"
 ensure-out-dir = "python -c \"import os; os.makedirs('out', exist_ok=True)\""
 data-cleaning-pipeline = [
     "ensure-out-dir",
-    "ensure-clean-db",
+    "ensure-geocoded-db",
     "remove-bom",
     "load-csv",
     "sql-install-fuzzystrmatch",
@@ -110,7 +113,7 @@ data-cleaning-pipeline = [
 ]
 data-cleaning-pipeline-keep = [
     "ensure-out-dir",
-    "ensure-clean-db",
+    "ensure-geocoded-db",
     "remove-bom",
     "load-csv",
     "sql-install-fuzzystrmatch",

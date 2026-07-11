@@ -1,8 +1,8 @@
 """Create the target database if it does not exist (idempotent).
 
-Used as the ``ensure-clean-db`` step of the cleaning pipeline so that the
-dedicated ``housing_clean`` database never has to be created by hand
-(previously a manual ``CREATE DATABASE`` step in the RUNBOOK).
+Used as the ``ensure-geocoded-db`` step of the cleaning pipeline so the
+target database never has to be created by hand (previously a manual
+``CREATE DATABASE`` step in the RUNBOOK).
 
 The target comes from ``DB_DATABASE`` (set per-task in ``pyproject.toml``)
 or ``--dbname``. The check-and-create runs against the server's
