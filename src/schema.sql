@@ -1,13 +1,14 @@
 --
 -- Authoritative schema for the Nashville housing database.
 --
--- GENERATED FILE - do not hand-edit. Produced from data/migration_dump.backup:
---   pg_restore --schema-only --no-owner --no-privileges -N pgagent \
---     -f src/schema.sql data/migration_dump.backup
---
--- This is the source of truth for the full enriched system (PostGIS geometry,
--- geocoding tables, address-parsing functions). The binary backup is restored
--- into a dedicated database with `uv run poe restore-backup` (see README).
+-- Originally generated from a pg_restore --schema-only dump of
+-- data/migration_dump.backup; that backup file no longer exists (removed
+-- when the project moved to a durable, upsert-only geocode cache instead of
+-- a shipped binary dump -- see RUNBOOK.md §2), so this file can no longer be
+-- regenerated the same way. It remains the source of truth for the full
+-- enriched system's DDL (PostGIS geometry, geocoding tables,
+-- address-parsing functions) -- consult it, don't hand-edit it without
+-- reconciling against the live `geocoded_housing` database.
 --
 -- Dumped from database version 17.4
 -- Dumped by pg_dump version 17.4

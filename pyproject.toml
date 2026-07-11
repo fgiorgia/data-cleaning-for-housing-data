@@ -83,7 +83,7 @@ DB_DATABASE = "postgres"
 
 [tool.poe.tasks]
 # Feature tools: operate on the geocoded_housing database provisioned by
-# restore-backup, which creates it if missing.
+# geocode-prep, which creates it if missing.
 address-standardization = { cmd = "python ./scripts/psql_with_config.py -f ./src/address_standardization.sql", env = { DB_DATABASE = "geocoded_housing" } }
 address-imputation = { cmd = "python ./scripts/psql_with_config.py -f ./src/address_imputation.sql", env = { DB_DATABASE = "geocoded_housing" } }
 data-quality-maintenance = { cmd = "python ./scripts/psql_with_config.py -f ./src/data_quality_maintenance.sql", env = { DB_DATABASE = "geocoded_housing" } }
@@ -127,16 +127,6 @@ geocode-prep = ["data-cleaning-pipeline-keep", "sync-addresses"]
 # (owner coordinates redacted) from whatever the geocode cache currently
 # holds. Works with a partially-geocoded cache (LEFT JOIN).
 export-dataset = { cmd = "python ./scripts/export_dataset.py", env = { DB_DATABASE = "geocoded_housing" } }
-
-# Maintainer-only: produce a privacy-sanitised dump for public distribution.
-# Redacts owner-only geocodes so the committed backup never ships geocoded
-# mailing addresses. Run after geocoding corrections, then commit the result.
-export-sanitised-dump = "python ./scripts/export_sanitised_dump.py"
-
-# Provision the full enriched database (PostGIS, geocoding, address functions)
-# by restoring data/migration_dump.backup into a dedicated database. See README.
-restore-backup = "python ./scripts/restore_backup.py"
-restore-backup-fresh = "python ./scripts/restore_backup.py --recreate"
 
 # Disaster-recovery dump of the durable geocode cache (unique_addresses,
 # address_correction_log) — geocoding is manual/rate-limited, so this is the
