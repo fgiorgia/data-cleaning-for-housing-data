@@ -31,7 +31,7 @@ dev = [
     "pyright>=1.1.400",
     "json5>=0.9",
     # Real-Postgres integration tests without touching your local server.
-    "testcontainers[postgres]>=4.8",
+    "testcontainers[postgres]>=4.14.2",
     # Type stubs so mypy understands third-party APIs.
     "pandas-stubs>=2.2",
     "types-requests>=2.32",
