@@ -7,13 +7,35 @@ license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.14,<4.0"
 dependencies = [
+    "pandas (>=2.2.3,<3.0.0)",
+    "sqlalchemy (>=2.0.39,<3.0.0)",
+    # psycopg (v3) replaces psycopg2, which is in maintenance mode.
+    # The [binary] extra ships a prebuilt libpq so CI needs no compiler.
+    # psycopg2-binary was removed: every engine now goes through
+    # scripts/db.py, which pins the postgresql+psycopg dialect.
+    "psycopg[binary] (>=3.2,<4.0)",
+    "folium (>=0.19.5,<0.20.0)",
+    "python-dotenv (>=1.0.1,<2.0.0)",
+    "requests>=2.34.2",
+    "dash>=4.3.0",
+    "dash-bootstrap-components>=2.0.4",
+    "streamlit>=1.58.0",
+    "plotly>=6.8.0",
+]
+
 [dependency-groups]
 dev = [
-  "poethepoet>=0.34.0",
-  "pytest>=9.0",
-  "black>=25.1.0",
-  "pyright>=1.1.400",
-  "agentic-tools @ git+https://github.com/swiftpostlabs/agentic-tools.git",
+    "poethepoet>=0.34.0",
+    "pytest>=9.0",
+    "black>=25.1.0",
+    "pyright>=1.1.400",
+    "json5>=0.9",
+    # Real-Postgres integration tests without touching your local server.
+    "testcontainers[postgres]>=4.8",
+    # Type stubs so mypy understands third-party APIs.
+    "pandas-stubs>=2.2",
+    "types-requests>=2.32",
+    "agentic-tools@git+https://github.com/swiftpostlabs/agentic-tools.git",
 ]
 
 [build-system]
@@ -26,14 +48,23 @@ packages = ["src/my_project", "scripts"]
 [tool.pytest.ini_options]
 minversion = "9.0"
 addopts = "--import-mode=importlib"
-testpaths = ["src", "scripts"]
-python_files = ["*_test.py"]
+testpaths = ["tests"]
+markers = [
+    "export: invariant checks on out/dataset.csv — needs a prior data-cleaning-pipeline run",
+]
+
+[tool.black]
+# Without this, black infers targets from requires-python (">=3.14,<4.0"),
+# includes py315, and its AST safety check fails under the installed 3.14.
+target-version = ["py314"]
 
 [tool.pyright]
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
 useLibraryCodeForTypes = true
-exclude = ["**/__pycache__", "src/typings"]
+# Setting exclude replaces pyright's defaults, so "**/.*" (which covers
+# .venv) must be restated or pyright type-checks the whole virtualenv.
+exclude = ["**/__pycache__", "**/.*", "src/typings"]
 stubPath = "src/typings"
 reportUnknownVariableType = "warning"
 reportUnknownArgumentType = "none"
@@ -47,62 +78,58 @@ reportUnnecessaryTypeIgnoreComment = "warning"
 [project.scripts]
 main = "my_project.main:main"
 
-[tool.poe.tasks.address-standardization]
-cmd = "python ./scripts/psql_with_config.py -f ./src/address_standardization.sql"
-
-[tool.poe.tasks.address-standardization.env]
-DB_DATABASE.default = "housing"
-
-[tool.poe.tasks.geocoder]
-cmd = "python ./src/geocoding_integration.py"
-
-[tool.poe.tasks.geocoder.env]
-DB_DATABASE.default = "housing"
-
-[tool.poe.tasks.geocoding-dashboard]
-cmd = "python ./src/geocoding_dashboard.py"
-
-[tool.poe.tasks.geocoding-dashboard.env]
-DB_DATABASE.default = "housing"
-
-[tool.poe.tasks.data-quality-check]
-cmd = "streamlit run ./scripts/data_quality_dashboard.py"
-
-[tool.poe.tasks.data-quality-check.env]
-DB_DATABASE.default = "housing"
-
-[tool.poe.tasks.show-map]
-cmd = "python ./scripts/property_map.py"
-
-[tool.poe.tasks.show-map.env]
-DB_DATABASE.default = "housing"
+[tool.poe.env]
+DB_DATABASE = "postgres"
 
 [tool.poe.tasks]
+# Feature tools: operate on the geocoded_housing database provisioned by
+# restore-backup, which creates it if missing.
+address-standardization = { cmd = "python ./scripts/psql_with_config.py -f ./src/address_standardization.sql", env = { DB_DATABASE = "geocoded_housing" } }
+address-imputation = { cmd = "python ./scripts/psql_with_config.py -f ./src/address_imputation.sql", env = { DB_DATABASE = "geocoded_housing" } }
+data-quality-maintenance = { cmd = "python ./scripts/psql_with_config.py -f ./src/data_quality_maintenance.sql", env = { DB_DATABASE = "geocoded_housing" } }
+geocoder = { cmd = "python ./src/geocoding_integration.py", env = { DB_DATABASE = "geocoded_housing" } }
+geocoding-dashboard = { cmd = "python ./src/geocoding_dashboard.py", env = { DB_DATABASE = "geocoded_housing" } }
+data-quality-check = { cmd = "streamlit run ./scripts/data_quality_dashboard.py", env = { DB_DATABASE = "geocoded_housing" } }
+show-map = { cmd = "python ./scripts/property_map.py", env = { DB_DATABASE = "geocoded_housing" } }
+
+# Cleaning tools: Require an override. MUST be written as inline tables { cmd = "...", env = {...} }.
+ensure-clean-db = { cmd = "python ./scripts/ensure_database.py", env = { DB_DATABASE = "housing_clean" } }
+load-csv = { cmd = "python ./scripts/load_csv.py --datasetFile='./data/dataset_no_bom.csv' --table='HousingDataRaw'", env = { DB_DATABASE = "housing_clean" } }
+sql-install-fuzzystrmatch = { cmd = "python ./scripts/psql_with_config.py -c \"CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;\"", env = { DB_DATABASE = "housing_clean" } }
+sql-cleanup = { cmd = "python ./scripts/psql_with_config.py -f ./src/cleaning.sql", env = { DB_DATABASE = "housing_clean" } }
+sql-cleanup-keep = { cmd = "python ./scripts/psql_with_config.py -v KEEP_TABLES=1 -f ./src/cleaning.sql", env = { DB_DATABASE = "housing_clean" } }
 remove-bom = "python ./scripts/remove_bom.py --input='./data/dataset.csv' --output='./data/dataset_no_bom.csv'"
-load-csv = "python ./scripts/load_csv.py --datasetFile='./data/dataset_no_bom.csv' --table='HousingDataRaw'"
 ensure-out-dir = "python -c \"import os; os.makedirs('out', exist_ok=True)\""
-sql-install-fuzzystrmatch = "python ./scripts/psql_with_config.py -c \"CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;\""
-sql-cleanup = "python ./scripts/psql_with_config.py -f ./src/cleaning.sql"
 data-cleaning-pipeline = [
-  "ensure-out-dir", 
-  "remove-bom", 
-  "load-csv",
-  "sql-install-fuzzystrmatch", 
-  "sql-cleanup", 
+    "ensure-out-dir",
+    "ensure-clean-db",
+    "remove-bom",
+    "load-csv",
+    "sql-install-fuzzystrmatch",
+    "sql-cleanup",
 ]
-sql-cleanup-keep = "python ./scripts/psql_with_config.py -v KEEP_TABLES=1 -f ./src/cleaning.sql"
 data-cleaning-pipeline-keep = [
-    "ensure-out-dir", 
-    "remove-bom", 
-    "load-csv", 
-    "sql-install-fuzzystrmatch", 
-    "sql-cleanup-keep"
-    ]
+    "ensure-out-dir",
+    "ensure-clean-db",
+    "remove-bom",
+    "load-csv",
+    "sql-install-fuzzystrmatch",
+    "sql-cleanup-keep",
+]
+
+# Maintainer-only: produce a privacy-sanitised dump for public distribution.
+# Redacts owner-only geocodes so the committed backup never ships geocoded
+# mailing addresses. Run after geocoding corrections, then commit the result.
+export-sanitised-dump = "python ./scripts/export_sanitised_dump.py"
 
 # Provision the full enriched database (PostGIS, geocoding, address functions)
 # by restoring data/migration_dump.backup into a dedicated database. See README.
 restore-backup = "python ./scripts/restore_backup.py"
 restore-backup-fresh = "python ./scripts/restore_backup.py --recreate"
+
+# Full nuke-and-rebuild: cleans databases + artifacts, runs every gate
+# and every tool. Needs Postgres running with extensions installed.
+test-everything = { shell = "bash tests/test_everything.sh" }
 
 upgrade-agentic-tools = "uv lock --upgrade-package agentic-tools"
 sync-skills = "uv run agentic-tools skills sync"
@@ -115,8 +142,8 @@ typecheck = "python -m pyright ./src"
 test = "python -m pytest"
 # --- AI Secure Parameterized Tasks ---
 lint-filter = { help = "Run linter and filter output", shell = "python -m black --check ./src | grep -i -E ${filter_term}", args = [
-  { name = "filter_term", positional = true, required = true },
+    { name = "filter_term", positional = true, required = true },
 ] }
 typecheck-filter = { help = "Run typechecker and filter output", shell = "python -m pyright ./src | grep -i -E ${filter_term}", args = [
-  { name = "filter_term", positional = true, required = true },
+    { name = "filter_term", positional = true, required = true },
 ] }

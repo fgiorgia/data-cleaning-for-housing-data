@@ -61,5 +61,10 @@
   },
   "github.copilot.enable": {
     "copilot-restricted-file": false
-  }
+  },
+  "cSpell.words": [
+    "cooldown",
+    "NOMINATIM",
+    "sdist"
+  ]
 }
