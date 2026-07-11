@@ -75,8 +75,10 @@ reportUnknownMemberType = "none"
 reportUnknownModuleType = "warning"
 reportUnnecessaryTypeIgnoreComment = "warning"
 
-[tool.poe.env]
-DB_DATABASE = "postgres"
+# No [tool.poe.env] DB_DATABASE default: scripts/config.py already falls back
+# to "postgres" when unset, and a poe-global value leaks into shell tasks
+# (test-everything warned about a phantom DB_DATABASE because of it). Every
+# DB-touching task pins its own DB_DATABASE below.
 
 [tool.poe.tasks]
 # Feature tools: operate on the geocoded_housing database provisioned by

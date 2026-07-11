@@ -1,6 +1,6 @@
 /**
 
-Data-quality maintenance for the restored geocoded_housing database.
+Data-quality maintenance for the geocoded_housing database.
 Run by `uv run poe data-quality-maintenance`.
 
 Two curated fixes, found via the data-quality dashboard:
@@ -28,6 +28,15 @@ nothing (NOT EXISTS guard on the issue rows).
 SET client_encoding TO 'UTF8';
 
 BEGIN;
+
+-- Bootstrap (no-op if present): DDL copied from src/schema.sql. The table
+-- used to arrive via the restored dump; now this script is its only owner.
+CREATE TABLE IF NOT EXISTS public.data_quality_issues (
+    unique_id bigint,
+    address1 text,
+    address2 text,
+    issue_type text
+);
 
 -- 1) Duplicate sale records: keep the earliest unique_id per group.
 CREATE TEMP TABLE duplicate_sales ON COMMIT DROP AS
