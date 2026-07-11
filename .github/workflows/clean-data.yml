@@ -21,7 +21,7 @@ jobs:
 
     steps:
       - name: Check out repository code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       # The project is managed with uv (uv.lock), not poetry. setup-uv also
       # installs the Python version required by pyproject and caches the
