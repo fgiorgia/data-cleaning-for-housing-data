@@ -1,17 +1,18 @@
 # Runbook
 
 Step-by-step instructions for a new user. The project has three workflows
-that share the same machine setup but target different databases:
+that share the same machine setup and a single database, `geocoded_housing`:
 
 | Workflow | Command | Database | Tables after run |
 | --- | --- | --- | --- |
-| **Cleaning pipeline** | `uv run poe data-cleaning-pipeline` | `housing_clean` (auto-created) | Dropped — `out/dataset.csv` is the deliverable |
-| **Backup restore** | `uv run poe restore-backup` | `geocoded_housing` (auto-created) | Persist — browse them in DBeaver / psql |
-| **Feature tools** | `uv run poe geocoding-dashboard` (and others) | `geocoded_housing` | Read/write the restored tables (§3) |
+| **Cleaning pipeline** | `uv run poe data-cleaning-pipeline-keep` | `geocoded_housing` (auto-created) | `housing_data` persists (needed by the address sync below) |
+| **Address sync + export** | `uv run poe geocode-prep` then `uv run poe export-dataset` | `geocoded_housing` | Upserts `unique_addresses`/`address_mappings` (never dropped/truncated); writes `out/dataset.csv` / `out/dataset_public.csv` |
+| **Feature tools** | `uv run poe geocoding-dashboard` (and others) | `geocoded_housing` | Read/write the same persistent tables (§3) |
 
-Each workflow creates its own database if missing — nothing is created by
-hand. The feature tools all operate on the `geocoded_housing` database
-created by the backup restore, so run **§2 before §3**.
+Each workflow creates the `geocoded_housing` database if missing — nothing
+is created by hand. The feature tools and the export step all operate on
+the same `geocoded_housing` database the cleaning pipeline and address sync
+populate, so run **§1 and §2 before §3**.
 
 ---
 
@@ -40,8 +41,8 @@ The **cleaning pipeline** needs only `fuzzystrmatch` (ships with
 `postgresql-contrib` on Linux, included by default on macOS/Windows
 installers).
 
-The **backup restore** additionally needs `postgis` and `pgagent`. Install
-them once:
+The **geocode cache** (`unique_addresses`, populated by the address sync,
+§2) additionally needs `postgis` and `pgagent`. Install them once:
 - Linux: `sudo apt install postgresql-contrib postgis postgresql-17-pgagent`
   (adjust the version number to match yours).
 - macOS: `brew install postgis`; pgagent is included.
@@ -96,19 +97,19 @@ control (it is already gitignored; verify with `git check-ignore -v .env`).
 
 ## 1. Cleaning pipeline
 
-Loads `data/dataset.csv`, cleans it in PostgreSQL, and exports the result to
-`out/dataset.csv`. Working tables are dropped on success.
+Loads `data/dataset.csv` and cleans it in PostgreSQL. This step alone
+produces no CSV — see §2 for the address sync and export that follow it.
 
 ### Does the database exist?
 
-The pipeline runs in its own `housing_clean` database, and its first step
-(`ensure-clean-db`) creates it if missing — **there is nothing to create by
-hand; skip straight to running the pipeline.**
+The pipeline runs in the `geocoded_housing` database, and its first step
+(`ensure-geocoded-db`) creates it if missing — **there is nothing to create
+by hand; skip straight to running the pipeline.**
 
 ### Run
 
 ```sh
-uv run poe data-cleaning-pipeline
+uv run poe data-cleaning-pipeline-keep
 ```
 
 What it does, in order:
@@ -117,11 +118,12 @@ What it does, in order:
 2. Strips the BOM from `data/dataset.csv` → `data/dataset_no_bom.csv`.
 3. Loads it into `"HousingDataRaw"` (replacing any previous version).
 4. Installs `fuzzystrmatch` if missing.
-5. Cleans the data inside a single transaction, exports `out/dataset.csv`,
-   and drops the working tables.
+5. Cleans the data inside a single transaction and keeps `housing_data`
+   (needed by the address sync in §2 — use plain `data-cleaning-pipeline`
+   instead if you only want the cleaning step and don't plan to sync/export).
 
-**Success** looks like `COPY <n>` followed by `COMMIT` at the end of the
-output, and a fresh `out/dataset.csv` on disk.
+**Success** looks like a series of `UPDATE`/`DELETE` notices followed by
+`COMMIT` at the end of the output.
 
 **Re-running** is always safe: loads replace, the transaction rolls back on
 failure, and leftover tables from a previous failure are dropped
@@ -142,57 +144,67 @@ automatically.
 
 ---
 
-## 2. Backup restore
+## 2. Address sync and export
 
-Restores `data/migration_dump.backup` into a **separate** `geocoded_housing`
-database.
-This is the full enriched system: PostGIS geometry, geocoded
+Bridges the cleaning pipeline's output into the durable geocode cache, then
+exports CSVs. This is the full enriched system: PostGIS geometry, geocoded
 `unique_addresses`, address-mapping and data-quality tables, and the
-address-parsing function library. Unlike the cleaning pipeline, the tables
-**persist** — this is what you browse in DBeaver and what the §3 feature
-tools read and write.
+address-parsing function library. Unlike the cleaning pipeline's disposable
+working tables, `unique_addresses` and `address_correction_log` **persist
+and are never dropped or truncated** by any automated step — this is what
+you browse in DBeaver and what the §3 feature tools read and write.
 
-### First run (database does not exist yet)
-
-The restore script creates the `geocoded_housing` database for you:
-
-```sh
-uv run poe restore-backup
-```
-
-What it does:
-
-1. Checks that `data/migration_dump.backup` exists.
-2. Creates the `geocoded_housing` database (running `CREATE DATABASE`
-   through the always-present `postgres` maintenance database).
-3. Filters the `spatial_ref_sys` data out of the restore list (PostGIS
-   repopulates that table on extension creation, so the dump's copy would
-   cause duplicate-key conflicts).
-4. Runs `pg_restore` into `geocoded_housing`.
-
-**Success** prints `Restore complete -> database 'geocoded_housing'`.
-
-### Re-run (database already exists)
-
-A plain `restore-backup` will refuse if the database already exists, to
-prevent accidental data loss:
-
-```
-Database 'geocoded_housing' already exists. Re-run with --recreate to drop and rebuild it.
-```
-
-To drop and rebuild:
+### Run
 
 ```sh
-uv run poe restore-backup-fresh
+uv run poe geocode-prep
 ```
 
-This runs `DROP DATABASE ... WITH (FORCE)` (disconnecting any active
-sessions) and then performs a clean restore.
+What it does (`src/sync_addresses.sql`, composed with the cleaning pipeline
+in §1 as `geocode-prep = [data-cleaning-pipeline-keep, sync-addresses]`):
+
+1. Bootstraps `unique_addresses` / `address_mappings` /
+   `address_correction_log` if they don't exist yet (a no-op on an
+   already-provisioned database — see [`src/schema.sql`](src/schema.sql) for
+   the authoritative DDL).
+2. Upserts distinct property/owner addresses from `housing_data` into
+   `unique_addresses` — `ON CONFLICT (address) DO NOTHING`, so existing rows
+   keep whatever geocode they already have.
+3. Rebuilds `address_mappings` from scratch (safe: it's fully derived from
+   `housing_data`, never hand-edited) and restores the foreign keys that the
+   cleaning pipeline's table rebuild dropped.
+
+**Success** ends with `COMMIT`. Safe to re-run any time — the second run of
+`geocode-prep` inserts zero new addresses if nothing changed upstream.
+
+### Optional: geocode with your own API keys
+
+```sh
+uv run poe geocoder             # geocode addresses missing coordinates
+uv run poe geocoder --stats-only # report API usage + DB completeness, no calls
+```
+
+This step is **manual and rate-limited** — it never runs in CI or in any
+composed task (`geocode-prep` deliberately excludes it). See §3.1 for the
+optional HERE API key. Skipping this step entirely is fine: `export-dataset`
+(next) works with a partially- or un-geocoded cache.
+
+### Export
+
+```sh
+uv run poe export-dataset
+```
+
+Writes `out/dataset.csv` (full, including owner-address coordinates — LOCAL
+ONLY, `out/` is gitignored) and `out/dataset_public.csv` (identical, with
+owner coordinate and geocode-metadata columns blanked on every row) from
+whatever `unique_addresses`/`address_mappings` currently hold. Overwrites
+both unconditionally; running it twice with no DB changes produces
+byte-identical files.
 
 ### What you get
 
-After a successful restore, the `geocoded_housing` database contains:
+After `geocode-prep`, the `geocoded_housing` database contains:
 
 | Table / View | Purpose |
 | --- | --- |
@@ -213,23 +225,19 @@ all of these under Schemas → public → Tables.
 | Error | Cause | Fix |
 | --- | --- | --- |
 | `Error: Missing Postgres password` | No `DB_PASSWORD` | Create `.env` (step 0.3) |
-| `Error: backup file not found` | `data/migration_dump.backup` missing | Make sure the file is present (it ships with the repo) |
-| `Error: refusing to target '...'` | `--dbname` matches `DB_DATABASE` or `postgres` | The restore deliberately refuses to overwrite your working or maintenance database; use the default `geocoded_housing` or pick another name with `--dbname` |
-| `Database 'geocoded_housing' already exists` | Previous restore succeeded | Use `restore-backup-fresh` to rebuild, or connect to the existing database — it's already set up |
-| `Could not find 'pg_restore'` | PostgreSQL bin directory not on `PATH` | Add it (e.g. `export PATH="/usr/lib/postgresql/17/bin:$PATH"` on Linux, or `C:\Program Files\PostgreSQL\17\bin` on Windows) |
+| `relation "unique_addresses" does not exist` | Ran a feature tool or `sync-addresses` before the cleaning pipeline populated `housing_data` | Run `uv run poe data-cleaning-pipeline-keep` first, or just `geocode-prep` |
 | `extension "postgis" is not available` | PostGIS not installed | Install it (step 0.1, Extensions) |
-| `duplicate key value violates unique constraint` on `spatial_ref_sys` | Stale `out/restore_toc.list` from a previous interrupted run | Delete `out/restore_toc.list` and re-run |
+| `cannot drop table housing_data because other objects depend on it` | Ran `sql-cleanup`/`sql-cleanup-keep` directly instead of through the poe tasks (which already handle this) | Use `uv run poe data-cleaning-pipeline-keep` / `geocode-prep`; `cleaning.sql`'s `DROP TABLE ... CASCADE` plus `sync-addresses` re-adding the FK is the intended sequence |
 
 ---
 
 ## 3. Feature tools (the `geocoded_housing` database)
 
-These tasks operate on the restored `geocoded_housing` database. They all
-read or write `unique_addresses` / `address_mappings` / `housing_data`,
-which **only exist in `geocoded_housing`**, so each task pins `DB_DATABASE`
-to `geocoded_housing` in `pyproject.toml`.
+These tasks operate on the `geocoded_housing` database. They all read or
+write `unique_addresses` / `address_mappings` / `housing_data`, so each task
+pins `DB_DATABASE` to `geocoded_housing` in `pyproject.toml`.
 
-**Prerequisite:** run `uv run poe restore-backup` (§2) first. Without it these
+**Prerequisite:** run `uv run poe geocode-prep` (§2) first. Without it these
 tools connect to a database that has no `unique_addresses` table and abort.
 
 ### 3.1 Extra setup: the HERE API key (optional)
@@ -371,7 +379,7 @@ Three layers, quickest to most authoritative:
 | `Address already in use` on launch | A previous dashboard process still owns port 8050 (or 8501 for Streamlit) | Kill the stale process — e.g. PowerShell: `Get-Process -Id (Get-NetTCPConnection -LocalPort 8050).OwningProcess \| Stop-Process` |
 | Map is blank but the table has rows | Those rows aren't geocoded yet (no coordinates) | Expected under "Pending" / "Needs attention"; switch to "Geocoded" to see plotted points |
 | `ModuleNotFoundError: dash` / `streamlit` / `requests` | Dependencies not synced (e.g. after pulling the merge) | `uv sync` |
-| Required tables missing (`unique_addresses`, `address_mappings`, `housing_data`) | Running a feature tool before the backup restore, or against the wrong database | Run `uv run poe restore-backup` (§2); confirm `DB_DATABASE` is `geocoded_housing` |
+| Required tables missing (`unique_addresses`, `address_mappings`, `housing_data`) | Running a feature tool before `geocode-prep`, or against the wrong database | Run `uv run poe geocode-prep` (§2); confirm `DB_DATABASE` is `geocoded_housing` |
 
 **Verify a HERE key without the app in the way** (PowerShell):
 
@@ -391,14 +399,15 @@ automatically on the next run.
 
 ## Connecting to the results in DBeaver
 
-### Cleaning pipeline output
+### CSV output
 
-The cleaning pipeline drops its tables on success, so there is nothing to
-browse in DBeaver — open `out/dataset.csv` directly. If you want the
-table to persist for inspection, run `uv run poe data-cleaning-pipeline-keep`
-instead (see the README for setup).
+`out/dataset.csv` and `out/dataset_public.csv` are produced by
+`export-dataset` (§2), not by the cleaning pipeline itself — open them
+directly, no database connection needed. Plain `uv run poe
+data-cleaning-pipeline` (without `-keep`) drops its tables on success, so
+there's nothing to browse in DBeaver for that step alone.
 
-### Backup restore output
+### Geocoded database
 
 1. DBeaver → New Database Connection → PostgreSQL.
 2. Host: `localhost`, Port: `5432`, **Database: `geocoded_housing`**, User:
@@ -407,11 +416,11 @@ instead (see the README for setup).
 4. Expand: geocoded_housing → Schemas → public → Tables.
 
 If you already have a connection open to `postgres` and wonder why the tables
-aren't there: the restore targets `geocoded_housing`, a separate database.
+aren't there: the pipeline targets `geocoded_housing`, a separate database.
 Either create a new connection pointing to `geocoded_housing`, or tick
 **Show all databases** in your existing connection's PostgreSQL tab
 (right-click connection → Edit Connection → PostgreSQL) and then expand the
 `geocoded_housing` node.
 
-After any pipeline or restore run, press **F5** on the connection to refresh
+After any pipeline or sync run, press **F5** on the connection to refresh
 DBeaver's metadata cache.

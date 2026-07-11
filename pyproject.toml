@@ -43,14 +43,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/my_project", "scripts"]
+packages = ["scripts"]
 
 [tool.pytest.ini_options]
 minversion = "9.0"
-addopts = "--import-mode=importlib"
+addopts = "--import-mode=importlib -m \"not export\""
 testpaths = ["tests"]
 markers = [
-    "export: invariant checks on out/dataset.csv — needs a prior data-cleaning-pipeline run",
+    "export: invariant checks on out/dataset.csv and out/dataset_public.csv — needs a prior export-dataset run",
 ]
 
 [tool.black]
@@ -75,15 +75,12 @@ reportUnknownMemberType = "none"
 reportUnknownModuleType = "warning"
 reportUnnecessaryTypeIgnoreComment = "warning"
 
-[project.scripts]
-main = "my_project.main:main"
-
 [tool.poe.env]
 DB_DATABASE = "postgres"
 
 [tool.poe.tasks]
 # Feature tools: operate on the geocoded_housing database provisioned by
-# restore-backup, which creates it if missing.
+# geocode-prep, which creates it if missing.
 address-standardization = { cmd = "python ./scripts/psql_with_config.py -f ./src/address_standardization.sql", env = { DB_DATABASE = "geocoded_housing" } }
 address-imputation = { cmd = "python ./scripts/psql_with_config.py -f ./src/address_imputation.sql", env = { DB_DATABASE = "geocoded_housing" } }
 data-quality-maintenance = { cmd = "python ./scripts/psql_with_config.py -f ./src/data_quality_maintenance.sql", env = { DB_DATABASE = "geocoded_housing" } }
@@ -93,16 +90,16 @@ data-quality-check = { cmd = "streamlit run ./scripts/data_quality_dashboard.py"
 show-map = { cmd = "python ./scripts/property_map.py", env = { DB_DATABASE = "geocoded_housing" } }
 
 # Cleaning tools: Require an override. MUST be written as inline tables { cmd = "...", env = {...} }.
-ensure-clean-db = { cmd = "python ./scripts/ensure_database.py", env = { DB_DATABASE = "housing_clean" } }
-load-csv = { cmd = "python ./scripts/load_csv.py --datasetFile='./data/dataset_no_bom.csv' --table='HousingDataRaw'", env = { DB_DATABASE = "housing_clean" } }
-sql-install-fuzzystrmatch = { cmd = "python ./scripts/psql_with_config.py -c \"CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;\"", env = { DB_DATABASE = "housing_clean" } }
-sql-cleanup = { cmd = "python ./scripts/psql_with_config.py -f ./src/cleaning.sql", env = { DB_DATABASE = "housing_clean" } }
-sql-cleanup-keep = { cmd = "python ./scripts/psql_with_config.py -v KEEP_TABLES=1 -f ./src/cleaning.sql", env = { DB_DATABASE = "housing_clean" } }
+ensure-geocoded-db = { cmd = "python ./scripts/ensure_database.py", env = { DB_DATABASE = "geocoded_housing" } }
+load-csv = { cmd = "python ./scripts/load_csv.py --datasetFile='./data/dataset_no_bom.csv' --table='HousingDataRaw'", env = { DB_DATABASE = "geocoded_housing" } }
+sql-install-fuzzystrmatch = { cmd = "python ./scripts/psql_with_config.py -c \"CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;\"", env = { DB_DATABASE = "geocoded_housing" } }
+sql-cleanup = { cmd = "python ./scripts/psql_with_config.py -f ./src/cleaning.sql", env = { DB_DATABASE = "geocoded_housing" } }
+sql-cleanup-keep = { cmd = "python ./scripts/psql_with_config.py -v KEEP_TABLES=1 -f ./src/cleaning.sql", env = { DB_DATABASE = "geocoded_housing" } }
 remove-bom = "python ./scripts/remove_bom.py --input='./data/dataset.csv' --output='./data/dataset_no_bom.csv'"
 ensure-out-dir = "python -c \"import os; os.makedirs('out', exist_ok=True)\""
 data-cleaning-pipeline = [
     "ensure-out-dir",
-    "ensure-clean-db",
+    "ensure-geocoded-db",
     "remove-bom",
     "load-csv",
     "sql-install-fuzzystrmatch",
@@ -110,22 +107,28 @@ data-cleaning-pipeline = [
 ]
 data-cleaning-pipeline-keep = [
     "ensure-out-dir",
-    "ensure-clean-db",
+    "ensure-geocoded-db",
     "remove-bom",
     "load-csv",
     "sql-install-fuzzystrmatch",
     "sql-cleanup-keep",
 ]
 
-# Maintainer-only: produce a privacy-sanitised dump for public distribution.
-# Redacts owner-only geocodes so the committed backup never ships geocoded
-# mailing addresses. Run after geocoding corrections, then commit the result.
-export-sanitised-dump = "python ./scripts/export_sanitised_dump.py"
+# Bridges the cleaning pipeline's output into the durable geocode cache
+# (unique_addresses/address_mappings). Never includes `geocoder` -- that
+# stays manual and rate-limited (see src/sync_addresses.sql).
+sync-addresses = { cmd = "python ./scripts/psql_with_config.py -f ./src/sync_addresses.sql", env = { DB_DATABASE = "geocoded_housing" } }
+geocode-prep = ["data-cleaning-pipeline-keep", "sync-addresses"]
 
-# Provision the full enriched database (PostGIS, geocoding, address functions)
-# by restoring data/migration_dump.backup into a dedicated database. See README.
-restore-backup = "python ./scripts/restore_backup.py"
-restore-backup-fresh = "python ./scripts/restore_backup.py --recreate"
+# Writes out/dataset.csv (full, LOCAL ONLY) and out/dataset_public.csv
+# (owner coordinates redacted) from whatever the geocode cache currently
+# holds. Works with a partially-geocoded cache (LEFT JOIN).
+export-dataset = { cmd = "python ./scripts/export_dataset.py", env = { DB_DATABASE = "geocoded_housing" } }
+
+# Disaster-recovery dump of the durable geocode cache (unique_addresses,
+# address_correction_log) — geocoding is manual/rate-limited, so this is the
+# only backup of that work. Output is gitignored (out/geocodes.backup).
+backup-geocodes = { cmd = "python ./scripts/backup_geocodes.py", env = { DB_DATABASE = "geocoded_housing" } }
 
 # Full nuke-and-rebuild: cleans databases + artifacts, runs every gate
 # and every tool. Needs Postgres running with extensions installed.

@@ -86,7 +86,11 @@ LIMIT 1;
 
 --Create a new Table to preserve the original one in order to modify the new one.
 --DROP IF EXISTS makes the pipeline re-runnable after a partial failure.
-DROP TABLE IF EXISTS housing_data;
+--CASCADE: address_mappings.housing_id FKs to housing_data.unique_id (see
+--schema.sql). This drops only that FK constraint, not address_mappings'
+--rows; sync-addresses (src/sync_addresses.sql) re-adds the constraint after
+--rebuilding address_mappings against the fresh table.
+DROP TABLE IF EXISTS housing_data CASCADE;
 
 CREATE TABLE housing_data AS
 (
@@ -288,15 +292,12 @@ BEGIN
 	RAISE NOTICE 'Cleaning Nashville Data complete!';
 END $$;
 
--- Save table back into dataset
-\copy housing_data TO './out/dataset.csv' DELIMITER ',' CSV HEADER;
-
 \if :{?KEEP_TABLES}
     -- Inspection mode: keep housing_data for browsing in DBeaver etc.
     DROP TABLE "HousingDataRaw";
 \else
     DROP TABLE "HousingDataRaw";
-    DROP TABLE housing_data;
+    DROP TABLE housing_data CASCADE;
 \endif
 
 COMMIT;
