@@ -15,14 +15,15 @@ from pathlib import Path
 
 import pytest
 
+from scripts.nashville_bounds import (
+    MAX_LATITUDE,
+    MAX_LONGITUDE,
+    MIN_LATITUDE,
+    MIN_LONGITUDE,
+)
+
 EXPORT_PATH: Path = Path("out/dataset.csv")
 PUBLIC_EXPORT_PATH: Path = Path("out/dataset_public.csv")
-
-# Nashville-area bounding box with generous margins.
-MIN_LATITUDE = 35.0
-MAX_LATITUDE = 36.7
-MIN_LONGITUDE = -87.6
-MAX_LONGITUDE = -85.7
 
 OWNER_COORDINATE_COLUMNS: tuple[str, ...] = (
     "owner_latitude",

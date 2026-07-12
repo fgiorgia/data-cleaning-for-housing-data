@@ -23,6 +23,7 @@ from sqlalchemy import (
 
 from scripts.config import get_db_config
 from scripts.db import get_engine
+from scripts.nashville_bounds import is_within_nashville_bounds
 
 # Nominatim usage policy: identify the application and stay <= 1 req/s.
 # https://operations.osmfoundation.org/policies/nominatim/
@@ -504,12 +505,28 @@ class GeocodingService:
                             "source": "OSM",
                         }
 
+                    # The state check above is not enough: Nominatim resolves
+                    # ambiguous street names ("MADISON", "OLD HICKORY") to
+                    # other Tennessee towns. Reject anything outside the
+                    # Nashville-area box so the caller falls through to HERE.
+                    latitude, longitude = float(result["lat"]), float(result["lon"])
+                    if not is_within_nashville_bounds(latitude, longitude):
+                        logger.warning(
+                            f"OSM result outside the Nashville-area bounding box "
+                            f"({latitude}, {longitude}): {full_address}"
+                        )
+                        return {
+                            "status": "FAILED",
+                            "error": "Result outside the Nashville-area bounding box",
+                            "source": "OSM",
+                        }
+
                     # Calculate confidence based on various factors
                     confidence = min(float(result.get("importance", 0.5)), 1.0)
 
                     return {
-                        "latitude": float(result["lat"]),
-                        "longitude": float(result["lon"]),
+                        "latitude": latitude,
+                        "longitude": longitude,
                         "match": result.get("display_name", full_address),
                         "confidence": confidence,
                         "source": "OSM",
@@ -628,12 +645,32 @@ class GeocodingService:
                                 "source": "HERE",
                             }
 
+                    # Same bounding-box guard as the OSM path: never store a
+                    # result outside the Nashville area (also catches a
+                    # missing position, which would otherwise store NULLs
+                    # with status GEOCODED).
+                    latitude, longitude = position.get("lat"), position.get("lng")
+                    if (
+                        latitude is None
+                        or longitude is None
+                        or not is_within_nashville_bounds(latitude, longitude)
+                    ):
+                        logger.warning(
+                            f"HERE result outside the Nashville-area bounding box "
+                            f"({latitude}, {longitude}): {full_address}"
+                        )
+                        return {
+                            "status": "FAILED",
+                            "error": "Result outside the Nashville-area bounding box",
+                            "source": "HERE",
+                        }
+
                     # HERE provides a score for relevance (0-1)
                     confidence = item.get("scoring", {}).get("queryScore", 0.5)
 
                     return {
-                        "latitude": position.get("lat"),
-                        "longitude": position.get("lng"),
+                        "latitude": latitude,
+                        "longitude": longitude,
                         "match": item.get("title", full_address),
                         "confidence": confidence,
                         "source": "HERE",

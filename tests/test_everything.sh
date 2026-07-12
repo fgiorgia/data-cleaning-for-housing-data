@@ -152,16 +152,11 @@ uv run poe export-dataset
 pass "out/dataset.csv and out/dataset_public.csv written"
 
 run_step "Export invariant tests (pytest -m export)"
-# The coordinate-bounds invariant fails BY DESIGN until the 92 known-bad
-# OSM geocodes are re-geocoded — tracked in
-# .agents/tasks/new/fix-out-of-bounds-geocodes/ (hard 0-tolerance assertion
-# kept deliberately; see that task's README). Deselect just that test here
-# so the rest of the invariants still gate this run; drop the --deselect
-# once the backfill lands.
-warn "Deselecting test_coordinates_are_within_nashville_area (known-bad geocodes, tracked task)"
-uv run pytest -m export -q \
-  --deselect tests/test_export_invariants.py::test_coordinates_are_within_nashville_area
-pass "Export invariants passed (minus the known coordinate-bounds caveat)"
+# Includes the hard coordinate-bounds assertion: the geocoder rejects
+# results outside the Nashville box (scripts/nashville_bounds.py), and the
+# 92 historical out-of-bounds OSM rows were re-geocoded via HERE.
+uv run pytest -m export -q
+pass "Export invariants passed"
 
 # Quick sanity: geocode-prep should have left all 3 core tables in place.
 TABLE_COUNT=$($PG -d geocoded_housing -tAc \
