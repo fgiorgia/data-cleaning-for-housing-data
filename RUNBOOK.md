@@ -322,7 +322,7 @@ queue query an index scan instead of a sequential scan. Run once against
 # Linux/macOS: DB_DATABASE=geocoded_housing uv run python ./scripts/psql_with_config.py -c "..."
 # Windows PowerShell:
 $env:DB_DATABASE = "geocoded_housing"
-uv run python ./scripts/psql_with_config.py -c "CREATE INDEX IF NOT EXISTS idx_ua_needs_attention ON unique_addresses (address_id) WHERE status = 'FAILED' OR latitude IS NULL OR longitude IS NULL; CREATE INDEX IF NOT EXISTS idx_ua_status ON unique_addresses (status);"
+uv run python ./scripts/psql_with_config.py -c "CREATE INDEX IF NOT EXISTS idx_ua_needs_attention ON unique_addresses (address_id) WHERE geocode_status = 'FAILED' OR latitude IS NULL OR longitude IS NULL; CREATE INDEX IF NOT EXISTS idx_ua_status ON unique_addresses (geocode_status);"
 Remove-Item Env:\DB_DATABASE
 ```
 

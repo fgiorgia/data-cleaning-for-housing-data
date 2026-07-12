@@ -17,12 +17,9 @@ Design notes:
   enforce here.
 - address_hash for newly inserted rows is computed as md5(address) on the
   as-stored (already uppercased) text, with NO case-folding. This matches
-  every existing row empirically (verified against thousands of real rows);
-  it does NOT match geocoding_service.py's _calculate_address_hash(), which
-  lowercases first -- that function backs a code path
-  (geocode_address(str)) that the real batch workflow never calls, and
-  which is independently broken (its INSERT omits the NOT NULL `address`
-  column). See .agents/tasks/TODO.md for that follow-up.
+  every existing row empirically (verified against thousands of real rows).
+  (geocoding_service.py once had a lowercasing _calculate_address_hash()
+  behind a broken geocode_address(str) path; both were removed 2026-07-12.)
 - Addresses are upserted as UPPER(TRIM(...)) so future casing drift from
   housing_data can't silently create a second cache entry for the same
   physical address.
@@ -53,9 +50,9 @@ CREATE TABLE IF NOT EXISTS public.unique_addresses (
     latitude double precision,
     longitude double precision,
     corrected_address text,
-    confidence double precision,
-    source character varying(10),
-    status character varying(20),
+    geocode_confidence double precision,
+    geocode_source character varying(10),
+    geocode_status character varying(20),
     geocoded_at timestamp without time zone,
     last_updated timestamp without time zone,
     address_hash character varying(32),

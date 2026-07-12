@@ -45,12 +45,12 @@ SELECT
     hd.owner_address_imputed,
     pua.latitude AS property_latitude,
     pua.longitude AS property_longitude,
-    pua.source AS property_geocode_source,
-    pua.confidence AS property_geocode_confidence,
+    pua.geocode_source AS property_geocode_source,
+    pua.geocode_confidence AS property_geocode_confidence,
     oua.latitude AS owner_latitude,
     oua.longitude AS owner_longitude,
-    oua.source AS owner_geocode_source,
-    oua.confidence AS owner_geocode_confidence
+    oua.geocode_source AS owner_geocode_source,
+    oua.geocode_confidence AS owner_geocode_confidence
 FROM housing_data hd
 LEFT JOIN address_mappings pam
     ON pam.housing_id = hd.unique_id AND pam.address_type = 'property'

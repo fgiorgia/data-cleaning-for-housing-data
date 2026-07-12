@@ -1,4 +1,3 @@
-import hashlib
 import logging
 import os
 import re
@@ -109,27 +108,29 @@ class GeocodingService:
                     )
                     logger.info("Added longitude column to unique_addresses")
 
-                if "source" not in columns:
+                if "geocode_source" not in columns:
                     conn.execute(
                         text(
-                            "ALTER TABLE unique_addresses ADD COLUMN source VARCHAR(10)"
+                            "ALTER TABLE unique_addresses ADD COLUMN geocode_source VARCHAR(10)"
                         )
                     )
-                    logger.info("Added source column to unique_addresses")
+                    logger.info("Added geocode_source column to unique_addresses")
 
-                if "status" not in columns:
+                if "geocode_status" not in columns:
                     conn.execute(
                         text(
-                            "ALTER TABLE unique_addresses ADD COLUMN status VARCHAR(20)"
+                            "ALTER TABLE unique_addresses ADD COLUMN geocode_status VARCHAR(20)"
                         )
                     )
-                    logger.info("Added status column to unique_addresses")
+                    logger.info("Added geocode_status column to unique_addresses")
 
-                if "confidence" not in columns:
+                if "geocode_confidence" not in columns:
                     conn.execute(
-                        text("ALTER TABLE unique_addresses ADD COLUMN confidence FLOAT")
+                        text(
+                            "ALTER TABLE unique_addresses ADD COLUMN geocode_confidence FLOAT"
+                        )
                     )
-                    logger.info("Added confidence column to unique_addresses")
+                    logger.info("Added geocode_confidence column to unique_addresses")
 
                 if "corrected_address" not in columns:
                     conn.execute(
@@ -359,20 +360,14 @@ class GeocodingService:
             return False
         return True
 
-    def _calculate_address_hash(self, address_standardized: str) -> str:
-        """Calculate a hash for an address string."""
-        # Normalize the address (remove extra spaces, convert to lowercase)
-        normalized_address = " ".join(address_standardized.lower().split())
-        return hashlib.md5(normalized_address.encode()).hexdigest()
-
     def _check_cache(self, address_id: int) -> dict[str, Any] | None:
         """Check if an address has already been geocoded based on address_id."""
         with self.engine.connect() as conn:
             result = conn.execute(
                 text("""
-                SELECT address_id, address_standardized, city, corrected_address, latitude, longitude, 
-                       confidence, source, status
-                FROM unique_addresses 
+                SELECT address_id, address_standardized, city, corrected_address, latitude, longitude,
+                       geocode_confidence, geocode_source, geocode_status
+                FROM unique_addresses
                 WHERE address_id = :address_id
             """),
                 {"address_id": address_id},
@@ -700,80 +695,37 @@ class GeocodingService:
             logger.error(f"Error geocoding with HERE: {e}")
             return {"status": "FAILED", "error": str(e), "source": "HERE"}
 
-    def geocode_address(self, address_id_or_string: int | str) -> dict[str, Any]:
+    def geocode_address(self, address_id: int) -> dict[str, Any]:
         """
-        Geocode an address using the hybrid approach.
+        Geocode an address from unique_addresses using the hybrid approach.
+
+        For ad-hoc address strings that are not in unique_addresses, call
+        geocode_with_osm / geocode_with_here directly - results for those
+        are never persisted.
 
         Args:
-            address_id_or_string: Either an address_id from unique_addresses table
-                              or a direct address string to geocode
+            address_id: An address_id from the unique_addresses table
 
         Returns:
             A dictionary with geocoding results
         """
-        address_id: None | int = None
-        full_address: None | str = None
+        # Check cache first
+        cached_result = self._check_cache(address_id)
+        if cached_result:
+            logger.info(f"Cache hit for address_id: {address_id}")
+            cached_result["from_cache"] = True
+            return cached_result
 
-        # Determine if we have an ID or a string address
-        if isinstance(address_id_or_string, int):
-            address_id = address_id_or_string
-            # Check cache first
-            cached_result = self._check_cache(address_id)
-            if cached_result:
-                logger.info(f"Cache hit for address_id: {address_id}")
-                cached_result["from_cache"] = True
-                return cached_result
-
-            # Get the full address (address_standardized + city)
-            address_standardized, city, full_address = self._get_full_address(
-                address_id
-            )
-
-            if not full_address:
-                logger.warning(f"Address not found for address_id: {address_id}")
-                return {
-                    "status": "FAILED",
-                    "error": "Address not found",
-                    "source": None,
-                }
-        else:
-            # We have a direct address string
-            full_address = address_id_or_string
-
-            # Calculate hash to check if we've seen this address before
-            address_hash = self._calculate_address_hash(full_address)
-
-            # Check if this address exists in our database
-            with self.engine.connect() as conn:
-                result = conn.execute(
-                    text("""
-                    SELECT address_id, latitude, longitude, confidence, source, status, corrected_address
-                    FROM unique_addresses
-                    WHERE address_hash = :hash
-                """),
-                    {"hash": address_hash},
-                ).fetchone()
-
-                if result and result[1] is not None and result[2] is not None:
-                    # We found a geocoded address with the same hash
-                    logger.info(f"Cache hit for address hash: {address_hash}")
-                    return {
-                        "id": result[0],
-                        "latitude": result[1],
-                        "longitude": result[2],
-                        "confidence": result[3],
-                        "source": result[4],
-                        "status": result[5],
-                        "match": result[6] or full_address,
-                        "from_cache": True,
-                    }
-                elif result:
-                    # We found the address but it's not geocoded yet
-                    address_id = result[0]
+        # Get the full address (address_standardized + city)
+        _, _, full_address = self._get_full_address(address_id)
 
         if not full_address:
-            logger.error("No address provided for geocoding")
-            return {"status": "FAILED", "error": "No address provided", "source": None}
+            logger.warning(f"Address not found for address_id: {address_id}")
+            return {
+                "status": "FAILED",
+                "error": "Address not found",
+                "source": None,
+            }
 
         # Try OpenStreetMap first
         osm_result = self.geocode_with_osm(full_address)
@@ -781,67 +733,7 @@ class GeocodingService:
         # If OSM geocoding was successful, return the result
         if osm_result.get("status") == "GEOCODED":
             logger.info(f"Successful geocoding with OSM: {full_address}")
-
-            # If we have an address_id, store the result
-            if address_id:
-                self.store_geocoding_result(address_id, osm_result)
-            else:
-                # Create a new address entry
-                with self.engine.begin() as conn:
-                    # Extract city and state if possible
-                    address_parts = full_address.split(",")
-                    address_standardized = address_parts[0].strip()
-                    city = address_parts[1].strip() if len(address_parts) > 1 else None
-
-                    result = conn.execute(
-                        text("""
-                        INSERT INTO unique_addresses 
-                        (address_standardized, city, corrected_address, latitude, longitude, 
-                         confidence, source, status, geocoded_at, address_hash)
-                        VALUES 
-                        (:address_standardized, :city, :corrected, :lat, :lng,
-                         :confidence, :source, :status, :now, :hash)
-                        RETURNING address_id
-                    """),
-                        {
-                            "address_standardized": address_standardized,
-                            "city": city,
-                            "corrected": osm_result.get("match"),
-                            "lat": osm_result.get("latitude"),
-                            "lng": osm_result.get("longitude"),
-                            "confidence": osm_result.get("confidence", 0.0),
-                            "source": "OSM",
-                            "status": "GEOCODED",
-                            "now": datetime.now(),
-                            "hash": self._calculate_address_hash(full_address),
-                        },
-                    )
-
-                    inserted = result.fetchone()
-                    if inserted is None:
-                        raise RuntimeError(
-                            "Insert into unique_addresses did not return an address_id"
-                        )
-                    address_id = inserted[0]
-                    osm_result["id"] = address_id
-
-                    # Update geometry if we have coordinates and PostGIS is available
-                    try:
-                        conn.execute(
-                            text("""
-                            UPDATE unique_addresses
-                            SET geom = ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)
-                            WHERE address_id = :id
-                        """),
-                            {
-                                "longitude": osm_result.get("longitude"),
-                                "latitude": osm_result.get("latitude"),
-                                "id": address_id,
-                            },
-                        )
-                    except Exception as e:
-                        logger.warning(f"Could not update geometry: {e}")
-
+            self.store_geocoding_result(address_id, osm_result)
             return osm_result
 
         # If OSM failed, try HERE
@@ -849,65 +741,7 @@ class GeocodingService:
         here_result = self.geocode_with_here(full_address)
 
         # Store the result (whether successful or not)
-        if address_id:
-            self.store_geocoding_result(address_id, here_result)
-        elif here_result.get("status") == "GEOCODED":
-            # Create a new address entry
-            with self.engine.begin() as conn:
-                # Extract city and state if possible
-                address_parts = full_address.split(",")
-                address_standardized = address_parts[0].strip()
-                city = address_parts[1].strip() if len(address_parts) > 1 else None
-
-                result = conn.execute(
-                    text("""
-                    INSERT INTO unique_addresses
-                    (address_standardized, city, corrected_address, latitude, longitude,
-                     confidence, source, status, geocoded_at, address_hash)
-                    VALUES
-                    (:address_standardized, :city, :corrected, :lat, :lng,
-                     :confidence, :source, :status, :now, :hash)
-                    RETURNING address_id
-                """),
-                    {
-                        "address_standardized": address_standardized,
-                        "city": city,
-                        "corrected": here_result.get("match"),
-                        "lat": here_result.get("latitude"),
-                        "lng": here_result.get("longitude"),
-                        "confidence": here_result.get("confidence", 0.0),
-                        "source": "HERE",
-                        "status": "GEOCODED",
-                        "now": datetime.now(),
-                        "hash": self._calculate_address_hash(full_address),
-                    },
-                )
-
-                inserted = result.fetchone()
-                if inserted is None:
-                    raise RuntimeError(
-                        "Insert into unique_addresses did not return an address_id"
-                    )
-                address_id = inserted[0]
-                here_result["id"] = address_id
-
-                # Update geometry if we have coordinates and PostGIS is available
-                try:
-                    conn.execute(
-                        text("""
-                        UPDATE unique_addresses
-                        SET geom = ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)
-                        WHERE address_id = :id
-                    """),
-                        {
-                            "longitude": here_result.get("longitude"),
-                            "latitude": here_result.get("latitude"),
-                            "id": address_id,
-                        },
-                    )
-                except Exception as e:
-                    logger.warning(f"Could not update geometry: {e}")
-
+        self.store_geocoding_result(address_id, here_result)
         return here_result
 
     def store_geocoding_result(self, address_id: int, result: dict[str, Any]) -> None:
@@ -945,9 +779,9 @@ class GeocodingService:
                     SET corrected_address = :corrected_address,
                         latitude = :latitude,
                         longitude = :longitude,
-                        confidence = :confidence,
-                        source = :source,
-                        status = :status,
+                        geocode_confidence = :confidence,
+                        geocode_source = :source,
+                        geocode_status = :status,
                         last_updated = :now,
                         geocoded_at = CASE WHEN geocoded_at IS NULL THEN :now ELSE geocoded_at END
                     WHERE address_id = :address_id
@@ -1052,14 +886,14 @@ class GeocodingService:
         query = """
             SELECT 
                 address_id, address_standardized, city, corrected_address, latitude, longitude,
-                confidence, source, status, geocoded_at
+                geocode_confidence, geocode_source, geocode_status, geocoded_at
             FROM unique_addresses
         """
 
         params: dict[str, Any] = {"limit": limit}
 
         if status:
-            query += " WHERE status = :status"
+            query += " WHERE geocode_status = :status"
             params["status"] = status
 
         query += " ORDER BY geocoded_at DESC LIMIT :limit"
@@ -1206,7 +1040,7 @@ class GeocodingService:
                     SET corrected_address = :corrected_address,
                         latitude = :latitude,
                         longitude = :longitude,
-                        status = 'MANUALLY_CORRECTED',
+                        geocode_status = 'MANUALLY_CORRECTED',
                         last_updated = :now
                     WHERE address_id = :id
                 """),

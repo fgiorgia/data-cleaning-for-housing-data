@@ -102,10 +102,10 @@ def show_stats(service: GeocodingService) -> None:
             """)).scalar() or 0
             not_geocoded_count = total_count - geocoded_count
             osm_count = conn.execute(text("""
-                SELECT COUNT(*) FROM unique_addresses WHERE source = 'OSM'
+                SELECT COUNT(*) FROM unique_addresses WHERE geocode_source = 'OSM'
             """)).scalar() or 0
             here_count = conn.execute(text("""
-                SELECT COUNT(*) FROM unique_addresses WHERE source = 'HERE'
+                SELECT COUNT(*) FROM unique_addresses WHERE geocode_source = 'HERE'
             """)).scalar() or 0
 
             # Calculate percentage
@@ -121,16 +121,16 @@ def show_stats(service: GeocodingService) -> None:
 
             # Get recent geocoding results
             result = conn.execute(text("""
-                SELECT source, status, COUNT(*) as count
+                SELECT geocode_source, geocode_status, COUNT(*) as count
                 FROM unique_addresses
-                WHERE source IS NOT NULL AND status IS NOT NULL
-                GROUP BY source, status
-                ORDER BY source, status
+                WHERE geocode_source IS NOT NULL AND geocode_status IS NOT NULL
+                GROUP BY geocode_source, geocode_status
+                ORDER BY geocode_source, geocode_status
             """)).fetchall()
 
             print("\n===== Geocoding Results =====")
             for row in result:
-                # Access by numerical index, as we know the columns are source, status, count
+                # Access by numerical index: geocode_source, geocode_status, count
                 print(f"{row[0]} - {row[1]}: {row[2]}")
     except Exception as e:
         print(f"Error getting database statistics: {e}")

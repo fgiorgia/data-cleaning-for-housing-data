@@ -531,9 +531,9 @@ CREATE TABLE public.unique_addresses (
     latitude double precision,
     longitude double precision,
     corrected_address text,
-    confidence double precision,
-    source character varying(10),
-    status character varying(20),
+    geocode_confidence double precision,
+    geocode_source character varying(10),
+    geocode_status character varying(20),
     geocoded_at timestamp without time zone,
     last_updated timestamp without time zone,
     address_hash character varying(32),
@@ -689,12 +689,12 @@ CREATE VIEW public.geocoding_status AS
         END) AS not_geocoded_count,
     count(
         CASE
-            WHEN ((source)::text = 'OSM'::text) THEN 1
+            WHEN ((geocode_source)::text = 'OSM'::text) THEN 1
             ELSE NULL::integer
         END) AS osm_count,
     count(
         CASE
-            WHEN ((source)::text = 'HERE'::text) THEN 1
+            WHEN ((geocode_source)::text = 'HERE'::text) THEN 1
             ELSE NULL::integer
         END) AS here_count,
     ((((count(

@@ -50,14 +50,14 @@ def get_geocoded_addresses(
         ua.corrected_address,
         ua.latitude,
         ua.longitude,
-        ua.confidence,
-        ua.source,
-        ua.status
+        ua.geocode_confidence,
+        ua.geocode_source,
+        ua.geocode_status
     FROM unique_addresses ua
     """
     params: dict[str, int | str] = {"limit": limit}
     if status:
-        query += " WHERE ua.status = :status"
+        query += " WHERE ua.geocode_status = :status"
         params["status"] = status
     query += " ORDER BY ua.geocoded_at DESC NULLS LAST LIMIT :limit"
 
@@ -71,11 +71,11 @@ def get_geocoding_stats() -> dict[str, Any]:
     SELECT
         COUNT(*) AS total,
         COUNT(*) FILTER (WHERE latitude IS NOT NULL AND longitude IS NOT NULL) AS geocoded,
-        COUNT(*) FILTER (WHERE status = 'FAILED') AS failed,
-        COUNT(*) FILTER (WHERE status = 'MANUALLY_CORRECTED') AS manually_corrected,
-        COUNT(*) FILTER (WHERE source = 'OSM') AS osm_source,
-        COUNT(*) FILTER (WHERE source = 'HERE') AS here_source,
-        AVG(confidence) FILTER (WHERE confidence IS NOT NULL) AS avg_confidence
+        COUNT(*) FILTER (WHERE geocode_status = 'FAILED') AS failed,
+        COUNT(*) FILTER (WHERE geocode_status = 'MANUALLY_CORRECTED') AS manually_corrected,
+        COUNT(*) FILTER (WHERE geocode_source = 'OSM') AS osm_source,
+        COUNT(*) FILTER (WHERE geocode_source = 'HERE') AS here_source,
+        AVG(geocode_confidence) FILTER (WHERE geocode_confidence IS NOT NULL) AS avg_confidence
     FROM unique_addresses
     """
     with engine.connect() as conn:
@@ -152,8 +152,8 @@ def _map_figure(map_df: Optional[pd.DataFrame]) -> go.Figure:
         lat="latitude",
         lon="longitude",
         hover_name="original_address",
-        hover_data=["corrected_address", "confidence", "source"],
-        color="status",
+        hover_data=["corrected_address", "geocode_confidence", "geocode_source"],
+        color="geocode_status",
         color_discrete_map={
             "GEOCODED": "green",
             "FAILED": "red",
@@ -273,9 +273,9 @@ app.layout = dbc.Container(
                                 },
                                 {"name": "Latitude", "id": "latitude"},
                                 {"name": "Longitude", "id": "longitude"},
-                                {"name": "Confidence", "id": "confidence"},
-                                {"name": "Source", "id": "source"},
-                                {"name": "Status", "id": "status"},
+                                {"name": "Confidence", "id": "geocode_confidence"},
+                                {"name": "Source", "id": "geocode_source"},
+                                {"name": "Status", "id": "geocode_status"},
                             ],
                             page_size=10,
                             style_table={"overflowX": "auto"},
@@ -565,19 +565,13 @@ def geocode_address(n_clicks: int | None, address: str | None) -> Any:
     if not n_clicks or not address:
         return ""
 
-    result = geocoding_service.geocode_address(address)
+    # Ad-hoc lookup, display only: geocode_address() persists results and
+    # takes an address_id, so call the providers directly and never store.
+    result = geocoding_service.geocode_with_osm(address)
+    if result.get("status") != "GEOCODED":
+        result = geocoding_service.geocode_with_here(address)
 
     if result.get("latitude") and result.get("longitude"):
-        # Only persist if the service exposes a storage hook for ad-hoc
-        # strings; results for known addresses are already stored by the
-        # service itself.
-        store = getattr(geocoding_service, "store_geocoding_result", None)
-        if callable(store):
-            try:
-                store(address, result)
-            except Exception:
-                pass  # display the result even if persisting it fails
-
         return html.Div(
             [
                 html.P(
