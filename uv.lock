@@ -266,7 +266,7 @@ requires-dist = [
     { name = "folium", specifier = ">=0.20.0,<0.21.0" },
     { name = "pandas", specifier = ">=3.0.3,<4.0.0" },
     { name = "plotly", specifier = ">=6.9.0" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4.0" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.3.4,<4.0" },
     { name = "python-dotenv", specifier = ">=1.0.1,<2.0.0" },
     { name = "requests", specifier = ">=2.34.2" },
     { name = "sqlalchemy", specifier = ">=2.0.51,<3.0.0" },
