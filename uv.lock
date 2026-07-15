@@ -263,7 +263,7 @@ dev = [
 requires-dist = [
     { name = "dash", specifier = ">=4.4.0" },
     { name = "dash-bootstrap-components", specifier = ">=2.0.4" },
-    { name = "folium", specifier = ">=0.19.5,<0.20.0" },
+    { name = "folium", specifier = ">=0.20.0,<0.21.0" },
     { name = "pandas", specifier = ">=3.0.3,<4.0.0" },
     { name = "plotly", specifier = ">=6.9.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4.0" },
@@ -319,7 +319,7 @@ wheels = [
 
 [[package]]
 name = "folium"
-version = "0.19.7"
+version = "0.20.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "branca" },
@@ -328,9 +328,9 @@ dependencies = [
     { name = "requests" },
     { name = "xyzservices" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1c/0b/5dea422dfe6abf743f8fb91e0c65ccaaf960b91248fce12dc768855dede6/folium-0.19.7.tar.gz", hash = "sha256:cf256a1e38441e7a8e01977bceeba34f86fd68745d7d7e490ccbecc79dc0d388", size = 108530, upload-time = "2025-06-03T04:45:27.729Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c7/76/84a1b1b00ce71f9c0c44af7d80f310c02e2e583591fe7d4cb03baecd0d3f/folium-0.20.0.tar.gz", hash = "sha256:a0d78b9d5a36ba7589ca9aedbd433e84e9fcab79cd6ac213adbcff922e454cb9", size = 109932, upload-time = "2025-06-16T20:22:51.803Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/be/2e/4dbe5577b7abcc8bc2fdef7e1b0e100ec654ecd47a2bede7ee1516f53f29/folium-0.19.7-py2.py3-none-any.whl", hash = "sha256:4f60efffd0a97fc22d94cba75cfa0bf954a87b828d7f2b878059e55d38c51c40", size = 112468, upload-time = "2025-06-03T04:45:26.409Z" },
+    { url = "https://files.pythonhosted.org/packages/b5/a8/5f764f333204db0390362a4356d03a43626997f26818a0e9396f1b3bd8c9/folium-0.20.0-py2.py3-none-any.whl", hash = "sha256:f0bc2a92acde20bca56367aa5c1c376c433f450608d058daebab2fc9bf8198bf", size = 113394, upload-time = "2025-06-16T20:22:50.318Z" },
 ]
 
 [[package]]

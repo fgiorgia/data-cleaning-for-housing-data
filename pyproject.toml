@@ -14,7 +14,7 @@ dependencies = [
     # psycopg2-binary was removed: every engine now goes through
     # scripts/db.py, which pins the postgresql+psycopg dialect.
     "psycopg[binary] (>=3.2,<4.0)",
-    "folium (>=0.19.5,<0.20.0)",
+    "folium>=0.20.0,<0.21.0",
     "python-dotenv (>=1.0.1,<2.0.0)",
     "requests>=2.34.2",
     "dash>=4.4.0",
