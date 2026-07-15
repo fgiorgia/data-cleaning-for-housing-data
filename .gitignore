@@ -2,7 +2,8 @@
 .pgpass
 
 # Pipeline artifacts (out/ covers dataset.csv, dataset_public.csv, restore_toc.list)
-out/
+out/*
+!out/dataset_public.csv
 data/dataset_no_bom.csv
 data/*.backup
 data/Nashville_housing_data_2013_2016.csv

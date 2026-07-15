@@ -43,13 +43,13 @@ jobs:
         run: |
           # Fail the job if the export is missing or empty, then assert the
           # basic post-cleaning invariants instead of only eyeballing rows.
-          test -s ./out/dataset.csv
-          head -5 ./out/dataset.csv
+          test -s ./out/dataset_public.csv
+          head -5 ./out/dataset_public.csv
           uv run python - << 'PYEOF'
           import csv
           import sys
 
-          with open("out/dataset.csv", encoding="utf-8") as f:
+          with open("out/dataset_public.csv", encoding="utf-8") as f:
               rows: list[dict[str, str]] = list(csv.DictReader(f))
 
           errors: list[str] = []
