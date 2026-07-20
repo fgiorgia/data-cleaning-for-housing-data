@@ -34,7 +34,7 @@ dev = [
     "testcontainers[postgres]>=4.14.2",
     # Type stubs so mypy understands third-party APIs.
     "pandas-stubs>=2.2",
-    "types-requests>=2.32",
+    "types-requests>=2.33.0.20260712",
     "agentic-tools@git+https://github.com/swiftpostlabs/agentic-tools.git",
 ]
 
