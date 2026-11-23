@@ -1,0 +1,9 @@
+# LF in every checkout, whatever core.autocrlf says.
+* text=auto eol=lf
+
+# Windows-only files keep CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Source data stays byte-for-byte as published.
+data/*.csv -text
