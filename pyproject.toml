@@ -70,9 +70,7 @@ reportUnknownVariableType = "warning"
 reportUnknownArgumentType = "none"
 reportUnknownParameterType = "warning"
 reportUnknownLambdaType = "warning"
-reportUnknownMemberAccess = "warning"
 reportUnknownMemberType = "none"
-reportUnknownModuleType = "warning"
 reportUnnecessaryTypeIgnoreComment = "warning"
 
 # No [tool.poe.env] DB_DATABASE default: scripts/config.py already falls back
