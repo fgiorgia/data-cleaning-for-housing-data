@@ -1,4 +1,5 @@
 name: CI
+
 on:
   push:
     branches:
@@ -7,13 +8,15 @@ on:
     branches: [main]
     types: [opened, synchronize]
 
-# Required for dependabot merge
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
-  build_test_lint_typecheck:
+  python:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -21,21 +24,37 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
-      - name: Install dependencies with uv
-        run: uv sync --all-groups
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
 
-      - name: Check AI policy generated files
-        run: uv run poe policy-check
-
+      - name: Lint
+        run: uv run poe lint
+      - name: Type-check
+        run: uv run poe typecheck
+      # tests/test_integration_postgres.py starts a disposable postgres:17 container through
+      # testcontainers; the runner's Docker serves it.
       - name: Run tests
         run: uv run poe test
-      - name: Run linting
-        run: uv run poe lint
-      - name: Run typechecking
-        run: uv run poe typecheck
 
-      - name: Dependabot auto-merge
-        if: github.event.pull_request.user.login == 'dependabot[bot]'
+  dependabot-automerge:
+    needs: [python]
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # SHA-pinned: this is the one step that runs with a write-scoped token.
+      - name: Read the update type
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+      # An allow-list, so an update fetch-metadata cannot classify waits for a human. Patches
+      # merge; minors only for development dependencies.
+      - name: Enable auto-merge for patches and development minors
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          (steps.metadata.outputs.update-type == 'version-update:semver-minor' &&
+          steps.metadata.outputs.dependency-type == 'direct:development')
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{github.event.pull_request.html_url}}
