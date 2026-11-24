@@ -35,7 +35,7 @@ dev = [
     # Type stubs so mypy understands third-party APIs.
     "pandas-stubs>=3.0.5.260730",
     "types-requests>=2.33.0.20260712",
-    "agentic-tools@git+https://github.com/swiftpostlabs/agentic-tools.git",
+    "agentic-tools",
 ]
 
 [build-system]
@@ -138,9 +138,6 @@ test-everything = { shell = "bash tests/test_everything.sh" }
 
 upgrade-agentic-tools = "uv lock --upgrade-package agentic-tools"
 sync-skills = "uv run agentic-tools skills sync"
-sync-ai-policy = "uv run agentic-tools policy sync"
-sync-ai-policy-import-vscode = "uv run agentic-tools policy import-vscode"
-policy-check = "uv run agentic-tools policy check"
 lint = "python -m black --check ./src"
 lint-fix = "python -m black ./src"
 typecheck = "python -m pyright ./src"
@@ -152,3 +149,6 @@ lint-filter = { help = "Run linter and filter output", shell = "python -m black 
 typecheck-filter = { help = "Run typechecker and filter output", shell = "python -m pyright ./src | grep -i -E ${filter_term}", args = [
     { name = "filter_term", positional = true, required = true },
 ] }
+
+[tool.uv.sources]
+agentic-tools = { git = "https://github.com/swiftpostlabs/agentic-tools.git" }
